@@ -953,7 +953,7 @@ _ATOM_B = re.compile(rb"[A-Za-z0-9]+")
 _ATOM_W = re.compile(rb"(?:[A-Za-z0-9]\x00)+")
 
 
-_FILEREF = re.compile(rb"^(?:[A-Za-z0-9_\-.()+&'#~\[\]]| (?! ))){0,48}?\.(?:sldprt|sldasm|slddrw|ipt|iam|idw|ipn|step|stp|stl|pdf|dwg|dxf|"
+_FILEREF = re.compile(rb"^(?:[A-Za-z0-9_\-.()+&'#~\[\]]| (?! )){0,48}?\.(?:sldprt|sldasm|slddrw|ipt|iam|idw|ipn|step|stp|stl|pdf|dwg|dxf|"
                       rb"igs|iges|x_t|x_b|sat|par|asm|psm|dft|prt|drw|catpart|catproduct|catdrawing|f3d|fcstd|3mf|obj|easm|eprt|"
                       rb"edrw|png|jpg|jpeg|zip)(?![A-Za-z0-9])", re.I)
 
