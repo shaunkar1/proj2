@@ -260,6 +260,67 @@ def code_atom(low):
     return 4 <= len(low) <= 24 and len(set(low)) > 2
 
 
+_YEAR = re.compile(r"^(?:19|20)\d\d$")
+_DATE_SEQ = re.compile(r"^(?:(?:19|20)\d\d[-_. ](?:0?[1-9]|1[0-2])[-_. ](?:0?[1-9]|[12]\d|3[01])|(?:0?[1-9]|[12]\d|3[01])[-_. ](?:0?[1-9]|1[0-2])[-_. ](?:19|20)\d\d)$")
+
+
+def _code_part(low):
+    """A word that can be part of a multi-part number: has a digit, or is a short
+    letter group that is not an ordinary word (TA, FAB, SHRPRO)."""
+    if any(c.isdigit() for c in low):
+        return True
+    if len(low) <= 2:
+        return True
+    return len(low) <= 8 and low not in STOP and low not in SOFTWARE and not is_word(low) and not is_foreign_word(low)
+
+
+def _code_core(low):
+    """A part that makes a sequence a number: 3+ digits (not a year) or a mixed code."""
+    if low.isdigit():
+        return len(low) >= 3 and not _YEAR.match(low)
+    return (len(low) >= 4 and any(c.isdigit() for c in low) and not CODE_GENERIC.match(low)
+            and not _CODE_DIM.search(low))
+
+
+def _code_seq_ok(lows):
+    return (len(lows) >= 2 and any(_code_core(a) for a in lows)
+            and sum(c.isdigit() for a in lows for c in a) >= 4)
+
+
+def code_sequences(stem):
+    """Lower-case multi-part numbers in a file-name stem, with the separators as written;
+    the whole number and its leading / trailing parts ("ta00-07-01-0009", "ta00-07-01")."""
+    out = []
+    run = []
+    prev_end = None
+
+    def flush():
+        if len(run) < 2:
+            return
+        n = len(run)
+        spans = [(0, n)] + [(0, k) for k in range(2, n)] + [(k, n) for k in range(1, n - 1)]
+        for a, b in spans:
+            lows = [stem[s:e].lower() for s, e in run[a:b]]
+            if not _code_seq_ok(lows):
+                continue
+            lit = stem[run[a][0]:run[b - 1][1]].lower()
+            if _DATE_SEQ.match(lit) or len(lit) > 48:
+                continue
+            out.append(lit)
+
+    for m in ATOM_RE.finditer(stem):
+        low = m.group(0).lower()
+        joined = prev_end is not None and m.start() - prev_end == 1 and stem[prev_end] in "-_. "
+        if _code_part(low) and (not run or joined):
+            run.append(m.span())
+        else:
+            flush()
+            run = [m.span()] if _code_part(low) else []
+        prev_end = m.end()
+    flush()
+    return out
+
+
 CAMEL_RE = re.compile(r"[A-Z][a-z]+|[a-z]+|[A-Z]+(?![a-z])")
 
 
@@ -331,6 +392,8 @@ class Dictionary(object):
         """Part / drawing numbers used in the file names of each collection."""
         per = {}
         spread = {}
+        pper = {}
+        pspread = {}
         for path in paths:
             base = path.rsplit("/", 1)[-1]
             stem = base
@@ -352,11 +415,22 @@ class Dictionary(object):
                     sp = spread.setdefault(low, set())
                     if len(sp) <= max_spread:
                         sp.add(scope)
+            for lit in code_sequences(stem):
+                pper.setdefault(scope, set()).add(lit)
+                sp = pspread.setdefault(lit, set())
+                if len(sp) <= max_spread:
+                    sp.add(scope)
         self.codes = {}
         for scope, atoms in per.items():
             keep = sorted(a for a in atoms if len(spread[a]) <= max_spread and a not in self.strong)
             if keep:
                 self.codes[scope] = keep
+        # multi-part numbers ("2020-048-10", "TA00-07-01-0009", "SHRPRO-V1 1110.01")
+        self.code_phrases = {}
+        for scope, lits in pper.items():
+            keep = sorted(l for l in lits if len(pspread[l]) <= max_spread)
+            if keep:
+                self.code_phrases[scope] = keep
 
     def add_repo_name(self, repo, scope):
         # Project names are replaced inside their own repository only: many repo
@@ -450,6 +524,7 @@ class Dictionary(object):
                 "scoped": {k: sorted(v) for k, v in self.scoped.items()},
                 "scoped_phrases": self.scoped_phrases, "codes": getattr(self, "codes", {}),
                 "auto": {k: sorted(v) for k, v in getattr(self, "auto", {}).items()},
+                "code_phrases": getattr(self, "code_phrases", {}),
                 "bounded": getattr(self, "bounded", [])}
 
     @classmethod
@@ -461,6 +536,7 @@ class Dictionary(object):
         d.scoped_phrases = dict(obj.get("scoped_phrases", {}))
         d.codes = dict(obj.get("codes", {}))
         d.auto = {k: set(v) for k, v in obj.get("auto", {}).items()}
+        d.code_phrases = dict(obj.get("code_phrases", {}))
         d.bounded = list(obj.get("bounded", []))
         return d
 

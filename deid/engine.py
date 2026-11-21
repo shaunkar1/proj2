@@ -14,7 +14,7 @@ import os
 import re
 
 from . import pseudo
-from .identities import SOFTWARE, STOP, VENDOR_DOMAINS, is_first_name, is_foreign_word, is_surname, is_word, strong_atom
+from .identities import CODE_GENERIC, SOFTWARE, STOP, VENDOR_DOMAINS, is_first_name, is_foreign_word, is_surname, is_word, strong_atom
 
 try:  # optional accelerator; a pure-Python trie regex is used when it is missing
     import ahocorasick
@@ -125,6 +125,43 @@ PROSE_LABEL = re.compile(
     "dibuixat|dissenyat|comprovat|aprovat|dessin\xe9 par|dessinateur|gezeichnet|gepr\xfcft|bearbeitet|bearb\\.?|gez\\.?|erstellt|"
     "dibujado|dise\xf1ado|revisado|aprobado|disegnato|progettista|autor|responsable|ersteller|konstrukteur|name|contact|contacte|contacto)"
     "[ \t]*(?:by|von|por|par)?[ \t]*[:.][ \t]*(?P<name>%s(?:[ \t]+(?:%s|[%s]\\.)){0,3})" % (_NAMEW, _NAMEW, _UP))
+PROSE_PARTNO = re.compile(
+    "(?i)(?<![A-Za-z\xc0-\xff])(?:(?:drawing|dwg|drg|drw|part|item|document|doc|artikel|article|zeichnungs?|zeichn|teile?|sach|"
+    "ident|plan|plano|dibujo|dessin|codi|c\xf3digo|codigo|reference|serial|order|job|model|modell)[ \t./-]{0,2}"
+    "(?:no|nr|num|n\xb0|n\xba|number|nummer|n\xfamero|numero|#)(?![A-Za-z])[.]?|p/n|s/n|codi document|document code|drawing code|part code)"
+    "[ \t]*[:.#]?[ \t]{0,3}(?P<num>[A-Za-z0-9]+(?:[-_./][A-Za-z0-9]+){0,6})")
+_PARTNO_DATE = re.compile(r"^(?:\d{1,2}[./-]\d{1,2}[./-](?:\d{2}|\d{4})|(?:19|20)\d{2}[./-]\d{1,2}[./-]\d{1,2})$")
+# alloys, tempers, threads and sizes that can follow a label in a title block (6061-T6, M8x1.25)
+_PARTNO_SPEC = re.compile(r"(?i)^(?:\d{4}-?[tTHhOo]\d{0,4}$|m\d+(?:[x.]|$)|[\d.]+x[\d.]+|(?:iso|din|en|ansi|asme|astm|jis|aisi|sae|bs|gb|nf|uni)(?![a-z])|\d+(?:[.,]\d+)?(?:mm|cm|in|kg|g|deg)$)")
+_PARTNO_WORDNUM = re.compile(r"^([a-z]{3,})(\d{1,4})$")
+
+
+def _partno_ok(v):
+    """The text after a "drawing no." label is a number: a multi-part code with 4+ digits
+    or one word of 5+ characters with 3+ digits (not a date, a sheet size or an alloy)."""
+    digits = sum(ch.isdigit() for ch in v)
+    if _PARTNO_DATE.match(v) or "\x00" in v or _PARTNO_SPEC.search(v):
+        return False
+    parts = re.split("[-_./]", v)
+    if len(parts) >= 2 and digits >= 4:
+        return True
+    return len(parts) == 1 and len(v) >= 5 and digits >= 3 or (len(parts) >= 2 and any(len(x) >= 5 and x[0:1].isalnum() and any(c.isdigit() for c in x) and any(c.isalpha() for c in x) for x in parts))
+
+
+def _partno_tok(t):
+    low = t.lower()
+    if len(low) < 2:
+        return False
+    if low.isdigit():
+        return len(low) >= 3
+    if low.isalpha():
+        return 3 <= len(low) <= 8 and not is_word(low) and not is_foreign_word(low)
+    m = _PARTNO_WORDNUM.match(low)
+    if m and (is_word(m.group(1)) or is_foreign_word(m.group(1))):
+        return False
+    return not CODE_GENERIC.match(low)
+
+
 PROSE_URL = re.compile(r"(?i)(?<![A-Za-z0-9@._-])(?:https?://|www\.)(?P<host>[A-Za-z0-9][A-Za-z0-9.-]{1,80}\.[A-Za-z]{2,12})(?P<path>/[^\s<>\"')\]]{0,120})?")
 PROSE_PHONE = re.compile(
     r"(?i)(?:(?<![A-Za-z\xc0-\xff])(?:tel|phone|fax|mobile|mob|cell|tlf|telf|t\xe9l|telefon|tel\xe9fono|telefono)\.?[ \t]*(?:no\.?|number|#)?[ \t]*[:.]?[ \t]*(?P<a>\+?\(?\d[\d ()\-/]{6,18}\d|\d{2,4}(?:\.\d{2,4}){2,4})(?![\d.,])"
@@ -243,6 +280,21 @@ class Engine(object):
             kind = "D" if a.isdigit() else "K"
             add(a, _Entry(kind, None, True, frozenset(scopes), False))
             add(_u16(a), _Entry(kind, None, True, frozenset(scopes), True))
+        # multi-part numbers ("2020-048-10"): as written and with one separator throughout
+        cps = {}
+        for scope, lits in getattr(dictionary, "code_phrases", {}).items():
+            for lit in lits:
+                atoms = ATOM_RE.findall(lit)
+                for v in set([lit] + [sep.join(atoms) for sep in ("-", "_", " ", ".")]):
+                    ent = cps.get(v)
+                    if ent is None:
+                        ent = cps[v] = (set(), atoms)
+                    ent[0].add(scope)
+        for v, (scopes, atoms) in cps.items():
+            if v in pats:
+                continue
+            add(v, _Entry("Q", atoms, True, frozenset(scopes), False))
+            add(_u16(v), _Entry("Q", atoms, True, frozenset(scopes), True))
         # words that only the documents of one collection use (see Dictionary.auto):
         # replaced in document text, never in file names or native files
         autos = {}
@@ -350,9 +402,9 @@ class Engine(object):
         if entry.kind == "A":
             if entry.wide or not ctx.numbers_ok or ctx.in_name:
                 return False
-        elif entry.kind in ("K", "D") and self.code_mode == "text" and (ctx.in_name or not ctx.numbers_ok):
+        elif entry.kind in ("K", "D", "Q") and self.code_mode == "text" and (ctx.in_name or not ctx.numbers_ok):
             return False      # experiment: numbers replaced in document text only
-        if entry.kind == "D":
+        if entry.kind == "D" or (entry.kind == "Q" and not any(c.isalpha() for a in entry.atoms for c in a)):
             # an all-digit part number: only in names, drawing text and references to
             # files - never in free numeric data
             if entry.wide:
@@ -399,15 +451,20 @@ class Engine(object):
             t = orig.decode("utf-16-le", "replace")
         else:
             t = orig.decode("latin-1")
-        if entry.kind == "P":
+        if entry.kind == "P" or entry.kind == "Q":
             out = []
             i = 0
+            code = entry.kind == "Q"
             for a in entry.atoms:
                 while i < len(t) and not t[i].isalnum():
                     out.append(t[i])
                     i += 1
                 piece = t[i:i + len(a)]
-                out.append(piece if a in STOP else self.token(piece))
+                if code:      # revision letters and plain version / size parts stay
+                    keep = len(a) == 1 or (len(a) == 2 and a.isdigit()) or (not a.isdigit() and (CODE_GENERIC.match(a) or is_word(a)))
+                else:
+                    keep = a in STOP
+                out.append(piece if keep else self.token(piece))
                 i += len(a)
             out.append(t[i:])
             r = "".join(out)
@@ -634,6 +691,10 @@ class Engine(object):
             toks = m.group("name").split()
             if toks and all(cls(t) in ("F", "N") for t in toks if len(t.strip(".")) > 1):
                 span(m.start("name"), m.end("name"), "pdf-person", True)
+        for m in PROSE_PARTNO.finditer(text):
+            # "DWG NO. 5BHMBA-DA-D-W2", "Zeichnungsnummer: 2020-048-10": the number after the label
+            if _partno_ok(m.group("num")):
+                span(m.start("num"), m.end("num"), "pdf-number", only=_partno_tok)
         for m in PROSE_ORG.finditer(text):
             toks = [t for t in m.group("name").split() if t[0].isupper() or t[0].isdigit()]
             if not toks:
