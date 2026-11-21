@@ -37,15 +37,34 @@ def process(path, data, engine, ctx, depth):
         ctx.numbers_ok = keep
 
 
+_PDF_NAME = re.compile(rb"(?<![A-Za-z0-9/:.\\~_\-])/[A-Za-z][A-Za-z0-9_.#+\-]{1,60}(?=[\s/<>\[\]()]|$)")
+
+
+def _raw_pass(data, engine, ctx):
+    """Plain same-length pass over the file bytes.  PDF syntax names (/CIDSystemInfo,
+    /FontDescriptor ...) are put back: a name hit inside one would break the file."""
+    new = engine.scrub(data, ctx, True, "")
+    if new == data:
+        return new
+    out = None
+    for m in _PDF_NAME.finditer(data):
+        a, b = m.span()
+        if new[a:b] != data[a:b]:
+            if out is None:
+                out = bytearray(new)
+            out[a:b] = data[a:b]
+    return new if out is None else bytes(out)
+
+
 def _process_file(path, data, engine, ctx, depth):
     if pikepdf is None:
         ctx.notes.append("pikepdf missing: PDF handled by raw pass only")
-        return engine.scrub(data, ctx, True, "")
+        return _raw_pass(data, engine, ctx)
     try:
         pdf = pikepdf.open(io.BytesIO(data))
     except Exception as exc:
         ctx.notes.append("PDF could not be parsed (%s); raw pass only" % type(exc).__name__)
-        return engine.scrub(data, ctx, True, "")
+        return _raw_pass(data, engine, ctx)
     try:
         ctx.numbers_ok = True         # drawing text and document properties
         try:
@@ -55,7 +74,7 @@ def _process_file(path, data, engine, ctx, depth):
         if not changed:
             # nothing in the live document; still clean plain-text leftovers (old
             # incremental revisions, unreferenced objects) without moving any offset
-            return engine.scrub(data, ctx, True, "")
+            return _raw_pass(data, engine, ctx)
         out = io.BytesIO()
         pdf.save(out, object_stream_mode=pikepdf.ObjectStreamMode.preserve, compress_streams=True)
         return out.getvalue()

@@ -62,7 +62,7 @@ def build_dictionary(rows, state_dir):
     paths = [r[0] for r in rows]
     d.add_manifest_paths(paths)
     d.add_web_domains(paths)
-    disc = os.path.join(state_dir, "discovered.json")
+    disc = os.environ.get("DEID_DISCOVERED") or os.path.join(state_dir, "discovered.json")
     if os.path.exists(disc):
         with open(disc) as f:
             d.add_discovered(json.load(f))
@@ -203,9 +203,15 @@ def _upload(key, data):
     raise RuntimeError("upload failed (%s)" % last)
 
 
-def _copy(src_key, dst_key):
+def _copy(src_key, dst_key, holder=None):
     """Server-side copy inside the bucket (no bytes travel).  Returns True on success."""
     cfg = _W["cfg"]
+    if holder is not None:
+        return _copy_with(holder, cfg, src_key, dst_key)
+    return _copy_with(_W, cfg, src_key, dst_key)
+
+
+def _copy_with(_W, cfg, src_key, dst_key):
     enc = lambda k: "/".join(urllib.parse.quote(p, safe="") for p in k.split("/"))
     for attempt in range(4):
         tok = _token()
@@ -238,6 +244,51 @@ def _copy(src_key, dst_key):
         _W["out"] = None
         time.sleep(1.5 ** attempt)
     return False
+
+
+def _copy_phase(rows, cfg, record, stop_file, nthreads=48):
+    """Copy the unchanged files of an incremental attempt with many light threads (the
+    requests carry no data).  Returns the rows that could not be copied."""
+    import queue
+    _W["cfg"] = cfg
+    _W.setdefault("token", ("", 0.0))
+    q = queue.Queue()
+    for r in rows:
+        q.put(r)
+    failed = []
+    flock = threading.Lock()
+
+    def work():
+        holder = {"out": None}
+        while True:
+            try:
+                r = q.get_nowait()
+            except queue.Empty:
+                return
+            prev = r[4]
+            t0 = time.time()
+            ok = False
+            try:
+                if not os.path.exists(stop_file):
+                    ok = _copy_with(holder, cfg, cfg["prev_prefix"] + "corpus/" + prev["out_path"],
+                                    cfg["prefix"] + "corpus/" + prev["out_path"])
+            except Exception:
+                ok = False
+            if ok:
+                record({"path": r[0], "in": r[1], "ok": True, "copied": True, "out_path": prev["out_path"],
+                        "out": prev.get("out", 0), "md5": prev.get("md5"), "changed": prev.get("changed"), "hits": 0,
+                        "notes": prev.get("notes", []), "findings": prev.get("findings", []),
+                        "t": [0, 0, round(time.time() - t0, 2)]})
+            else:
+                with flock:
+                    failed.append(r)
+
+    ts = [threading.Thread(target=work, daemon=True) for _ in range(nthreads)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    return failed
 
 
 class _Timeout(Exception):
@@ -399,8 +450,12 @@ def run(args):
            "in_host": urllib.parse.urlparse(args.base).netloc, "bucket": bucket, "prefix": prefix,
            "prev_prefix": prev_prefix, "dry": args.dry, "input_cache": getattr(args, "input_cache", "")}
     is_copy = lambda r: len(r) > 4 and isinstance(r[4], dict)
-    small = [r for r in todo if r[1] < BIG or is_copy(r)]
-    big = [r for r in todo if r[1] >= BIG and not is_copy(r)]
+    copies = [r for r in todo if is_copy(r)] if not args.dry else []
+    small = [r for r in todo if r[1] < BIG and not (copies and is_copy(r))]
+    big = [r for r in todo if r[1] >= BIG and not (copies and is_copy(r))]
+    if args.dry:
+        small = [r for r in todo if r[1] < BIG or is_copy(r)]
+        big = [r for r in todo if r[1] >= BIG and not is_copy(r)]
     # mix sizes so progress is steady and memory use is even
     random.Random(7).shuffle(small)
     ctxm = multiprocessing.get_context("spawn")
@@ -424,6 +479,8 @@ def run(args):
             if stats["n"] % 200 == 0:
                 donef.flush()
 
+    stop_file = os.path.join(args.state, "stop-%s" % args.attempt)
+
     def consume(items, nworkers):
         """Run tasks; survive a worker process dying (re-run its files one at a time,
         and fall back to the generic pass for a file that kills a worker twice)."""
@@ -437,6 +494,9 @@ def run(args):
             try:
                 while True:
                     while len(inflight) < nworkers * 3 and not exhausted:
+                        if os.path.exists(stop_file):      # state/stop-N: finish what is running, then end
+                            exhausted = True
+                            break
                         row = next(it, None)
                         if row is None:
                             exhausted = True
@@ -501,6 +561,17 @@ def run(args):
     rep = threading.Thread(target=reporter, daemon=True)
     rep.start()
     threads = []
+    leftover = []
+
+    def copy_all():
+        try:
+            leftover.extend(_copy_phase(copies, cfg, record, stop_file))
+        except Exception as exc:
+            print("copy phase stopped (%r)" % (exc,), flush=True)
+            leftover.extend(copies)
+
+    if copies:
+        threads.append(threading.Thread(target=copy_all))
     if small:
         threads.append(threading.Thread(target=consume, args=(small, args.workers)))
     if big:
@@ -509,6 +580,13 @@ def run(args):
         t.start()
     for t in threads:
         t.join()
+    if leftover and not os.path.exists(stop_file):
+        # files that could not be copied are produced again (the worker retries the copy first)
+        print("%d files could not be copied; producing them again" % len(leftover), flush=True)
+        consume([r for r in leftover if r[1] < BIG], args.workers)
+        rest = [r for r in leftover if r[1] >= BIG]
+        if rest:
+            consume(rest, args.big_workers)
     stop.set()
     donef.close()
     el = time.time() - stats["t0"]

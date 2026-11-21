@@ -368,6 +368,8 @@ class Engine(object):
             tok = data[a:b].decode("latin-1").lower()
             if tok.isalpha() and (is_word(tok) or is_foreign_word(tok)):
                 return False      # part of an ordinary word
+            if _inside_word(data[a:b].decode("latin-1"), s - a, e - a):
+                return False      # "stemIn" in "CIDSystemInfo", "drawin" in "DrawingNumber"
         if _blobby(data, s, e):
             return False  # inside base64 / hex encoded data
         if binary and e - s < 10 and not _texty(data, s, e):
@@ -969,6 +971,44 @@ _ATOM_W = re.compile(rb"(?:[A-Za-z0-9]\x00)+")
 _FILEREF = re.compile(rb"^(?:[A-Za-z0-9_\-.()+&'#~\[\]]| (?! )){0,48}?\.(?:sldprt|sldasm|slddrw|ipt|iam|idw|ipn|step|stp|stl|pdf|dwg|dxf|"
                       rb"igs|iges|x_t|x_b|sat|par|asm|psm|dft|prt|drw|catpart|catproduct|catdrawing|f3d|fcstd|3mf|obj|easm|eprt|"
                       rb"edrw|png|jpg|jpeg|zip)(?![A-Za-z0-9])", re.I)
+
+
+_SEG = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
+
+
+def _plain(w):
+    w = w.lower()
+    return len(w) >= 3 and w.isalpha() and (is_word(w) or is_foreign_word(w))
+
+
+def _inside_word(tok, s, e):
+    """True when tok[s:e] (a name found inside the longer token ``tok``) is not a name
+    part of that token: it starts and ends in the middle of words, or the words it
+    touches are ordinary ones (CIDSy[stemIn]fo, [Drawin]gNumber, [drawin]gs)."""
+    segs = [(m.start(), m.end()) for m in _SEG.finditer(tok)]
+    over = [(a, b) for a, b in segs if a < e and b > s]
+    if not over:
+        return False
+    left = over[0][0] == s
+    right = over[-1][1] == e
+    if left and right:
+        return False                      # exactly whole parts: Tesla|Turbine, BCN3D|Sigma
+    if not left and not right:
+        return True                       # strictly inside
+    if all(_plain(tok[a:b]) for a, b in over):
+        return True                       # the parts it touches are ordinary words
+    low = tok.lower()
+    if left:                              # an ordinary word that merely begins with the name
+        a, b = over[-1]
+        for k in range(e + 1, min(b, e + 9) + 1):
+            if _plain(low[s:k]):
+                return True
+    else:                                 # ... or merely ends with it
+        a, b = over[0]
+        for k in range(max(a, s - 9), s):
+            if _plain(low[k:e]):
+                return True
+    return False
 
 
 def _fileref(data, e):

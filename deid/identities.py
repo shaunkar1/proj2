@@ -426,6 +426,11 @@ class Dictionary(object):
                 a = a.lower()
                 if a not in STOP and len(a) >= 4:
                     self.scoped.setdefault(scope, set()).add(a)
+        for scope, atoms in obj.get("curated", {}).items():     # reviewed by hand: short names allowed
+            for a in atoms:
+                a = a.lower()
+                if a not in STOP and len(a) >= 3:
+                    self.scoped.setdefault(scope, set()).add(a)
         for scope, phrases in obj.get("scoped_phrases", {}).items():
             for ph in phrases:
                 lows = [x.lower() for x in ATOM_RE.findall(ph if isinstance(ph, str) else " ".join(ph))]

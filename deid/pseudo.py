@@ -15,8 +15,10 @@ from functools import lru_cache
 # the original font of a drawing occupies the same space as the name it replaces
 # (text positioned glyph by glyph in PDFs stays evenly spaced and extracts cleanly).
 # The groups hold for lower and upper case alike, so "Name" and "NAME" get the same
-# letters; "i" has no partner of its width in both cases and is kept.
-LOWER_GROUPS = ("i", "jl", "ftr", "abcekpsvxyz", "dghnoqu", "mw")
+# letters; "i" has no partner of its width in both cases and is kept.  In the common
+# sans-serif metrics a/b/e/p are 556 wide (capitals 667) and c/k/s/v/x/y/z are 500, so
+# lower-case text keeps its exact length.
+LOWER_GROUPS = ("i", "jl", "ftr", "abep", "cksvxyz", "dghnoqu", "mw")
 _GROUP = {}
 for _g in LOWER_GROUPS:
     for _c in _g:
