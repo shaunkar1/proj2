@@ -13,7 +13,7 @@ ASCII hit is only accepted inside a printable run, so numeric geometry is never 
 import re
 
 from . import pseudo
-from .identities import SOFTWARE, STOP, VENDOR_DOMAINS, is_first_name, is_word, strong_atom
+from .identities import SOFTWARE, STOP, VENDOR_DOMAINS, is_first_name, is_surname, is_word, strong_atom
 
 try:  # optional accelerator; a pure-Python trie regex is used when it is missing
     import ahocorasick
@@ -32,6 +32,7 @@ student usuario utilisateur benutzer root ubuntu runner travis vsts circleci jen
 admini defaul operator sysadmin workeradm
 all appdata programdata local temp tmp me username name your yourname youruser xxx www-data vagrant
 docker app worker ci git node pi debian ec2-user opc azureuser lenovo dell hp asus acer msi""".split())
+US_STATES = set("AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC".split())
 USER_STOP_PHRASES = {"all users", "default user", "your name", "user name"}
 FIELD_STOP = {
     "", "author", "none", "unknown", "n/a", "na", "-", "--", "---", "anonymous", "user", "default",
@@ -87,6 +88,64 @@ CAD_EXT = re.compile(r'(?i)\.(?:sldprt|sldasm|slddrw|ipt|iam|idw|ipn|prt|asm|drw
                      r'catdrawing|step|stp|igs|iges|x_t|x_b|sat|stl|dwg|dxf|fcstd|f3d|3mf|jt|pdf|obj|wrl)(?![A-Za-z0-9])')
 
 
+# ---- visible prose (PDF page text, drawing title blocks) -------------------------
+_UP = "A-Z\xc0-\xd6\xd8-\xde"
+_LO = "a-z\xdf-\xf6\xf8-\xff"
+_CAPW = "[%s][%s]+(?:[-'][%s][%s]+)?" % (_UP, _LO, _UP, _LO)
+_NAMEW = "(?:%s|[%s]{2,}(?:-[%s]{2,})?)" % (_CAPW, _UP, _UP)
+PROSE_PERSON = re.compile(
+    "(?<![A-Za-z\xc0-\xff])(?P<first>%s)(?P<mid>(?:[ \t]+[%s]\\.?){0,2})[ \t]+(?P<last>%s(?:[ \t]+%s)?)(?![A-Za-z\xc0-\xff])"
+    % (_NAMEW, _UP, _NAMEW, _NAMEW))
+PROSE_INITIAL = re.compile(
+    "(?<![A-Za-z0-9\xc0-\xff.])(?P<ini>(?:[%s]\\.[ \t]?){1,2})[ \t]*(?P<last>%s)(?![A-Za-z0-9\xc0-\xff])" % (_UP, _CAPW))
+ORG_SUFFIX = (r"(?:Inc|Incorporated|LLC|L\.L\.C|Ltd|Limited|GmbH|AG|KG|Co|Corp|Corporation|Company|S\.A|SA|S\.L|SL|S\.r\.l|Srl|SRL|"
+              r"B\.V|BV|N\.V|NV|Pty|PLC|plc|A/S|AB|Oy|Kft|s\.r\.o|Sdn Bhd|Pvt|LLP|e\.V|"
+              r"Technologies|Technology|Engineering|Industries|Industrial|Systems|Solutions|Manufacturing|Instruments|"
+              r"Electronics|Robotics|Labs|Lab|Laboratory|Laboratories|Institute|Foundation|Associates|Group|Works|Machining|"
+              r"Enterprises|Designs|Studio|Studios|Aerospace|Automation|Dynamics|Motors|Tools|Tooling|Precision)")
+PROSE_ORG = re.compile(
+    "(?<![A-Za-z\xc0-\xff])(?P<name>(?:%s|[%s][%s0-9]+)(?:[ \t]+(?:%s|[%s][%s0-9]+|&|and|of|de|di|for)){0,3})"
+    "[ \t]*,?[ \t]+(?P<suf>%s)(?:\\.|(?![A-Za-z0-9\xc0-\xff]))" % (_CAPW, _UP, _UP, _CAPW, _UP, _UP, ORG_SUFFIX))
+PROSE_ORG_PREFIX = re.compile(
+    "(?<![A-Za-z0-9\xc0-\xff])(?P<pre>(?:Technical |Technische |State |National |Royal )?(?:University|Universit\xe4t|Universit\xe9|Universidad|Universit\xe0|Universidade|"
+    "Universiteit|Institute|Institut|Instituto|Istituto|College|School|Academy|Politecnico|Polit\xe9cnica|Hochschule|Fachhochschule|"
+    "Fundaci\xf3|Fundaci\xf3n|Fondazione|Laboratory|Department|Dept\\.?|Faculty|Centre|Center)(?: of| de| di| del| della| f\xfcr| for| d')?(?: the| la| les)?)"
+    "[ \t]+(?P<name>(?:%s|[%s]{2,})(?:[ \t]+(?:%s|[%s]{2,}|of|de|di|and|at)){0,3})" % (_CAPW, _UP, _CAPW, _UP), re.I)
+PROSE_COPYRIGHT = re.compile(
+    "(?:\xa9|\\(c\\)|\\bCopyright\\b|\\bCOPYRIGHT\\b)[ \t]*(?:\xa9|\\(c\\))?[ \t]*(?:\\d{4}(?:[ \t]*[-,][ \t]*\\d{2,4})*)?[ \t]*,?[ \t]*(?:by[ \t]+)?"
+    "(?P<name>(?:%s|[%s0-9]{2,}|&)(?:[ \t.,]+(?:%s|[%s0-9]{2,}|&|and|of|de)){0,4})" % (_CAPW, _UP, _CAPW, _UP))
+PROSE_PROPERTY = re.compile(
+    "(?i)\\b(?:sole )?property of[ \t\r\n]+(?:the[ \t\r\n]+)?(?P<name>[^<>.;:\r\n]{3,60}?)[ \t]*(?=[.;,\r\n]|[ \t]+(?:any|and its|is|it|without|reproduction)\\b)")
+PROSE_LABEL = re.compile(
+    "(?i)(?<![A-Za-z\xc0-\xff])(?:drawn|drawn by|designed|designed by|design by|checked|checked by|approved|approved by|appr\\.?|"
+    "author|authors|engineer|created by|made by|prepared by|modified by|reviewed by|released by|drafter|draftsman|designer|"
+    "dibuixat|dissenyat|comprovat|aprovat|dessin\xe9 par|dessinateur|gezeichnet|gepr\xfcft|bearbeitet|bearb\\.?|gez\\.?|erstellt|"
+    "dibujado|dise\xf1ado|revisado|aprobado|disegnato|progettista|autor|responsable|ersteller|konstrukteur|name|contact|contacte|contacto)"
+    "[ \t]*(?:by|von|por|par)?[ \t]*[:.][ \t]*(?P<name>%s(?:[ \t]+(?:%s|[%s]\\.)){0,3})" % (_NAMEW, _NAMEW, _UP))
+PROSE_URL = re.compile(r"(?i)(?<![A-Za-z0-9@._-])(?:https?://|www\.)(?P<host>[A-Za-z0-9][A-Za-z0-9.-]{1,80}\.[A-Za-z]{2,12})(?P<path>/[^\s<>\"')\]]{0,120})?")
+PROSE_PHONE = re.compile(
+    r"(?i)(?:(?:tel|phone|fax|mobile|mob|cell|tlf|telf|t\xe9l|telefon|tel\xe9fono|telefono)\.?[ \t]*(?:no\.?|number|#)?[ \t]*[:.]?[ \t]*(?P<a>\+?\(?\d[\d ().\-/]{6,18}\d)"
+    r"|(?<![\w.,/-])(?P<b>\+\d{1,3}[ .-]?\(?\d{1,4}\)?(?:[ .-]?\d{2,4}){2,4})(?![\w.,/-])"
+    r"|(?<![\w.,/-])(?P<c>\(\d{3}\)[ ]?\d{3}[-.]\d{4}|\d{3}[-.]\d{3}[-.]\d{4})(?![\w.,/-]))")
+PROSE_ADDR = re.compile("(?<![A-Za-z0-9])(?P<city>(?:%s[ \t]+){0,2}%s),[ \t]+(?P<st>[A-Z]{2})[ \t]+(?P<zip>\\d{5}(?:-\\d{4})?)(?![A-Za-z0-9])" % (_CAPW, _CAPW))
+PROSE_STOP = set("""drawing drawn title scale sheet size date name rev revision material finish weight tolerance tolerances
+dimensions dimension unless otherwise specified third angle projection do not scale part number qty quantity item description
+assembly section detail view top bottom front back left right side general notes note approved checked designed engineer
+all rights reserved proprietary confidential information contained this sole property any reproduction written permission
+prohibited next used application comments mfg appr eng debur break sharp edges surface angular fractional decimal place
+places two three interpret geometric tolerancing per bend mach see table figure page chapter table contents index
+north south east west new old main sub base cover plate bracket mount holder shaft bearing gear motor screw bolt nut washer
+pin spring housing frame panel block body arm leg head cap ring clip clamp spacer support adapter adaptor cable wire board
+stainless steel aluminum aluminium brass copper plastic nylon abs pla petg rubber iso din ansi asme jis metric imperial
+inch inches mm millimeters millimetres degrees degree january february march april may june july august september october
+november december monday tuesday wednesday thursday friday saturday sunday version model type class series standard
+bill materials open source hardware license creative commons attribution share alike public domain mit gnu apache
+data sheet datasheet user manual guide instructions introduction overview features specifications technical performance
+electrical mechanical characteristics absolute maximum ratings pin configuration functional typical application
+high low max min nom ref typ thru hole holes dia diameter radius depth length width height thickness
+united states america china germany france italy spain japan canada kingdom""".split())
+
+
 class Ctx(object):
     """Per-file state: scope, local identities, findings for the discovery log."""
 
@@ -98,12 +157,15 @@ class Ctx(object):
         self.local_prefix = set()  # 8.3 short names (JSMITH~1): prefix of the real account name
         self.produced = set()     # pseudonyms already written (never replaced again)
         self.findings = []        # (kind, value)
+        self._seen = set()
+        self.digit_spans = []     # phone numbers / postcodes found in the text being scrubbed
         self.notes = []
         self.hits = 0
 
     def found(self, kind, value):
         value = value.strip()
-        if value and len(self.findings) < 200:
+        if value and len(self.findings) < 400 and (kind, value) not in self._seen:
+            self._seen.add((kind, value))
             self.findings.append((kind, value[:120]))
 
 
@@ -254,7 +316,7 @@ class Engine(object):
         return plan
 
     # -- local detection ----------------------------------------------
-    def detect(self, text, ctx, unit_spans, is_step=False, is_xml=False, is_dxf=False, is_ps=False):
+    def detect(self, text, ctx, unit_spans, is_step=False, is_xml=False, is_dxf=False, is_ps=False, prose=False):
         """Find identity fields in ``text`` (a str); append (start, end) spans to unit_spans."""
         def name_ok(name):
             low = name.strip().lower()
@@ -336,6 +398,8 @@ class Engine(object):
             ctx.found("email", m.group(0))
             self._learn(m.group("local"), ctx, person=True)
             self._learn(dom.rsplit(".", 1)[0], ctx)
+        if prose:
+            self._prose(text, ctx, unit_spans)
         if is_step:
             head = text[:65536]
             m = STEP_FILE_NAME.search(head)
@@ -369,6 +433,120 @@ class Engine(object):
         if is_ps:
             for m in PS_FOR.finditer(text[:20000]):
                 self._field(text, m.start("v"), m.end("v"), unit_spans, ctx, "ps-for")
+
+    def _prose(self, text, ctx, unit_spans):
+        """Names of people and organisations, phone numbers, web addresses and postal
+        addresses in visible prose (PDF page text, title blocks)."""
+        def cls(tok):
+            low = tok.lower().strip(".")
+            if low in PROSE_STOP or low in STOP or low in SOFTWARE or len(low) < 2:
+                return "S"
+            if is_first_name(low):
+                return "F"
+            if not is_word(low):
+                return "N"
+            if is_surname(low):
+                return "L"
+            return "W"
+
+        def span(a, b, kind, person=False, only=None):
+            value = text[a:b]
+            atoms = [x.lower() for x in ATOM_RE.findall(value)]
+            if not atoms or all(x in ctx.produced or x in STOP or x in PROSE_STOP for x in atoms):
+                return
+            if only is None:
+                unit_spans.append((a, b))
+            else:
+                for mm in re.finditer("[A-Za-z0-9\xc0-\xff]+", value):
+                    if only(mm.group(0)):
+                        unit_spans.append((a + mm.start(), a + mm.end()))
+            ctx.found(kind, value)
+            self._learn(value, ctx, person=person)
+
+        for m in PROSE_PERSON.finditer(text):
+            first, last = m.group("first"), m.group("last")
+            lasts = last.split()
+            c1 = cls(first)
+            cl = [cls(x) for x in lasts]
+            if c1 == "S" or cl[0] == "S":
+                # "Drawn John Smith": try again without the leading generic word
+                if c1 == "S" and len(lasts) == 2 and cl[0] == "F" and cl[1] in ("N", "F", "L"):
+                    span(m.start("last"), m.end("last"), "pdf-person", True)
+                continue
+            caps_all = first.isupper() and lasts[0].replace("-", "").isupper()
+            mid = bool(m.group("mid").strip())
+            ok = False
+            if c1 == "F" and cl[0] in ("N", "F"):
+                ok = True
+            elif c1 == "F" and cl[0] == "L" and (not caps_all or mid):
+                ok = True
+            elif c1 == "F" and cl[0] == "W" and not caps_all and mid:
+                ok = True
+            elif c1 == "N" and cl[0] == "F" and not caps_all and len(first) >= 4:
+                ok = True            # family name first
+            elif c1 in ("N", "L") and cl[0] in ("N", "L") and mid and not caps_all:
+                ok = True            # Xxxx Q. Yyyy
+            if not ok:
+                continue
+            if len(lasts) == 2 and cl[1] in ("N", "F", "L") and not (cl[1] == "L" and caps_all):
+                span(m.start("first"), m.end("last"), "pdf-person", True)
+            else:
+                span(m.start("first"), m.start("last") + len(lasts[0]), "pdf-person", True)
+        for m in PROSE_INITIAL.finditer(text):
+            if cls(m.group("last")) in ("N", "L") and len(m.group("last")) >= 4:
+                span(m.start("last"), m.end("last"), "pdf-person", True)
+        for m in PROSE_LABEL.finditer(text):
+            toks = m.group("name").split()
+            if toks and all(cls(t) in ("F", "N") for t in toks if len(t.strip(".")) > 1):
+                span(m.start("name"), m.end("name"), "pdf-person", True)
+        for m in PROSE_ORG.finditer(text):
+            toks = [t for t in m.group("name").split() if t[0].isupper() or t[0].isdigit()]
+            if not toks:
+                continue
+            classes = [cls(t) for t in toks]
+            if not any(len(t) >= 2 and t[0].isalpha() for t in toks):
+                continue
+            if any(c in ("N", "F") for c in classes):
+                span(m.start("name"), m.end("name"), "pdf-org", only=lambda t: cls(t) in ("N", "F", "L"))
+            elif len(toks) >= 2 and all(c in ("W", "L") for c in classes):
+                span(m.start("name"), m.end("name"), "pdf-org")
+        for m in PROSE_ORG_PREFIX.finditer(text):
+            toks = m.group("name").split()
+            if cls(toks[0]) != "S" and toks[0][0].isupper():
+                span(m.start("name"), m.end("name"), "pdf-org")
+        for m in PROSE_COPYRIGHT.finditer(text):
+            toks = [t for t in m.group("name").replace(",", " ").split()]
+            if toks and cls(toks[0]) != "S":
+                span(m.start("name"), m.end("name"), "pdf-org")
+        for m in PROSE_PROPERTY.finditer(text):
+            v = m.group("name").strip()
+            if v and v[0].isalpha() and "insert" not in v.lower() and "company name" not in v.lower():
+                span(m.start("name"), m.end("name"), "pdf-org")
+        for m in PROSE_URL.finditer(text):
+            host = m.group("host").lower()
+            if any(host == v or host.endswith("." + v) for v in VENDOR_DOMAINS) and not host.endswith((".github.io", ".gitlab.io")):
+                continue
+            labels = host.split(".")
+            if labels[-1] not in TLDS:
+                continue
+            hs = m.start("host")
+            keep = 2 if len(labels) >= 3 and labels[-2] in ("co", "com", "ac", "edu", "org", "gov", "net") and len(labels[-1]) == 2 else 1
+            if host.endswith((".github.io", ".gitlab.io")):
+                keep = 2
+            end = hs + len(host) - sum(len(x) + 1 for x in labels[-keep:])
+            start = hs + (4 if host.startswith("www.") else 0)
+            if end > start:
+                span(start, end, "pdf-url")
+        for m in PROSE_PHONE.finditer(text):
+            g = "a" if m.group("a") else "b" if m.group("b") else "c"
+            digits = sum(ch.isdigit() for ch in m.group(g))
+            if 9 <= digits <= 15:
+                ctx.digit_spans.append(m.span(g))
+                ctx.found("pdf-phone", m.group(g))
+        for m in PROSE_ADDR.finditer(text):
+            if m.group("st") in US_STATES:
+                span(m.start("city"), m.end("city"), "pdf-place")
+                ctx.digit_spans.append(m.span("zip"))
 
     def _field(self, text, a, b, unit_spans, ctx, kind):
         value = text[a:b]
@@ -435,8 +613,10 @@ class Engine(object):
         spans = []       # (start, end) byte spans of identity fields (ASCII)
         wspans = []      # same for UTF-16LE (byte offsets)
         if detect:
-            flags = dict(is_step=kind == "step", is_xml=kind in ("xml", "svg"), is_dxf=kind == "dxf", is_ps=kind == "ps")
+            flags = dict(is_step=kind == "step", is_xml=kind in ("xml", "svg"), is_dxf=kind == "dxf", is_ps=kind == "ps",
+                         prose=kind == "prose")
             if not binary:
+                ctx.digit_spans = []
                 self.detect(data.decode("latin-1"), ctx, spans, **flags)
             else:
                 for m in _ASCII_RUN.finditer(data):
@@ -452,10 +632,23 @@ class Engine(object):
                     t = m.group().decode("utf-16-le", "replace")
                     self.detect(t, ctx, tmp, is_xml="<" in t)
                     wspans.extend((m.start() + 2 * a, m.start() + 2 * b) for a, b in tmp)
+        dspans = ctx.digit_spans if detect and not binary else []
+        ctx.digit_spans = []
         if dry:
             return data
         occupied = [(s, e) for s, e, _ in plan]
         extra = []
+        for (a, b) in dspans:
+            # phone numbers and postcodes: new digits, same layout
+            digs = [i for i in range(a, b) if 0x30 <= data[i] <= 0x39]
+            if len(digs) < 4 or any(a < y and x < b for x, y in occupied):
+                continue
+            new = pseudo.atom("".join(chr(data[i]) for i in digs))
+            if len(new) != len(digs):
+                continue
+            for i, ch in zip(digs, new):
+                extra.append((i, i + 1, ch.encode("latin-1")))
+            occupied.append((a, b))
         # identity-field spans: every atom not already handled, except generic words
         for (a, b) in spans:
             for m in _ATOM_B.finditer(data, a, b):

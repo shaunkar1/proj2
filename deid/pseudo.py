@@ -1,8 +1,7 @@
 """Deterministic, format-preserving pseudonyms.
 
 Every identity "atom" (a run of ASCII letters/digits) maps to a pseudonym of the
-same length and the same character classes (vowel->vowel, consonant->consonant,
-digit->digit, case kept).  The mapping is a keyed HMAC of the case-folded atom, so
+same length (letter->letter of similar printed width, digit->digit, case kept).  The mapping is a keyed HMAC of the case-folded atom, so
 the same name gets the same pseudonym everywhere (paths, text, UTF-16 inside
 binaries, archive members) without a shared lookup table, and same-length output
 keeps fixed-width / length-prefixed / offset-based formats valid.
@@ -12,8 +11,16 @@ import hmac
 import re
 from functools import lru_cache
 
-VOWELS = "aeiou"
-CONS = "bcdfghjklmnpqrstvwxyz"
+# Letters are exchanged inside groups of similar printed width, so a pseudonym set in
+# the original font of a drawing occupies the same space as the name it replaces
+# (text positioned glyph by glyph in PDFs stays evenly spaced and extracts cleanly).
+# The groups hold for lower and upper case alike, so "Name" and "NAME" get the same
+# letters; "i" has no partner of its width in both cases and is kept.
+LOWER_GROUPS = ("i", "jl", "ftr", "abcekpsvxyz", "dghnoqu", "mw")
+_GROUP = {}
+for _g in LOWER_GROUPS:
+    for _c in _g:
+        _GROUP[_c] = _g
 ATOM_RE = re.compile(r"[A-Za-z0-9]+")
 
 _KEY = b"unset"
@@ -34,17 +41,16 @@ def _stream(seed, n):
     return out[:n]
 
 
-@lru_cache(maxsize=200000)
+@lru_cache(maxsize=400000)
 def _atom(low):
     """Pseudonym (lower case) for a lower-case ASCII atom."""
-    rnd = _stream(low.encode("ascii", "replace"), len(low) + 8)
+    rnd = _stream(low.encode("ascii", "replace"), 2 * len(low) + 8)
     out = []
     for i, ch in enumerate(low):
-        r = rnd[i]
-        if ch in VOWELS:
-            out.append(VOWELS[r % 5])
-        elif "a" <= ch <= "z":
-            out.append(CONS[r % 21])
+        r = rnd[2 * i] * 256 + rnd[2 * i + 1]
+        g = _GROUP.get(ch)
+        if g:
+            out.append(g[r % len(g)])
         elif "0" <= ch <= "9":
             out.append("0123456789"[r % 10])
         else:
@@ -53,10 +59,9 @@ def _atom(low):
     if res == low:  # never map a name onto itself
         for i, ch in enumerate(low):
             alt = None
-            if ch in VOWELS:
-                alt = VOWELS[(VOWELS.index(ch) + 1 + rnd[-1] % 4) % 5]
-            elif "a" <= ch <= "z":
-                alt = CONS[(CONS.index(ch) + 1 + rnd[-1] % 20) % 21]
+            g = _GROUP.get(ch)
+            if g and len(g) > 1:
+                alt = g[(g.index(ch) + 1 + rnd[-1] % (len(g) - 1)) % len(g)]
             elif "0" <= ch <= "9":
                 alt = "0123456789"[(int(ch) + 1 + rnd[-1] % 9) % 10]
             if alt and alt != ch:

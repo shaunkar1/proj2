@@ -34,6 +34,8 @@ def main(argv=None):
     r.add_argument("--limit", type=int, default=0)
     r.add_argument("--sample", type=int, default=0, help="process N files spread over the manifest")
     r.add_argument("--prefix-filter", default="")
+    r.add_argument("--only-list", default="", help="process only the manifest paths listed in this file")
+    r.add_argument("--input-cache", default="", help="folder holding already-downloaded input files (used when present)")
     r.add_argument("--reuse-from", default="", help="previous attempt number: copy unchanged outputs inside the bucket")
     r.add_argument("--only-ext", default="", help="with --reuse-from: extensions to re-process, e.g. .pdf,.zip")
     r.add_argument("--only-prefix", default="", help="with --reuse-from: also re-process paths with this prefix")

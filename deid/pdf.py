@@ -412,8 +412,10 @@ def _content_stream(target, raw, engine, ctx, resources=None, pdf=None, fcache=N
             probes.append("".join(dec).encode("utf-8", "replace"))
         except Exception:
             pass
-    if (all(engine.scrub(pr, ctx, False, "") == pr for pr in probes)
-            and not any(engine.maybe(pr, ctx) or _HINT.search(pr) for pr in probes[1::2])):
+    glyphwise = len(pieces) > 40 and sum(len(pc) for pc in pieces) < 3 * len(pieces)
+    if (all(engine.scrub(pr, ctx, False, "prose") == pr for pr in probes)
+            and not any(engine.maybe(pr, ctx) or _HINT.search(pr) for pr in probes[1::2])
+            and not (glyphwise and len(pieces) < 60000)):
         return None
     try:
         ops = pikepdf.parse_content_stream(stream)
@@ -556,7 +558,7 @@ def _content_stream(target, raw, engine, ctx, resources=None, pdf=None, fcache=N
         old_clean = old.replace("�", "\x00")
     else:
         old_clean = old
-    new = engine.scrub_text(old_clean, ctx)
+    new = engine.scrub_text(old_clean, ctx, "prose")
     if new == old_clean or len(new) != len(old_clean):
         return None
     changes = {}

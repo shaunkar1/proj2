@@ -102,9 +102,18 @@ def _token():
     return _W["token"][0]
 
 
-def _download(urlpath, size):
+def _download(urlpath, size, path=None):
     cfg = _W["cfg"]
     last = None
+    cache = cfg.get("input_cache")
+    if cache and path:
+        lp = os.path.join(cache, path)
+        try:
+            if os.path.getsize(lp) == size:
+                with open(lp, "rb") as f:
+                    return f.read()
+        except OSError:
+            pass
     for attempt in range(8):
         try:
             if _W["in"] is None:
@@ -254,7 +263,7 @@ def _task(row):
             pass
     try:
         engine = _W["engine"]
-        data = _download(urlpath, size) if size else b""
+        data = _download(urlpath, size, path) if size else b""
         t1 = time.time()
         ctx = Ctx(path, scope_of(path))
         try:
@@ -309,9 +318,13 @@ def run(args):
     rows = read_manifest(man)
     if args.prefix_filter:
         rows = [r for r in rows if r[0].startswith(args.prefix_filter)]
+    if getattr(args, "only_list", ""):
+        with open(args.only_list, encoding="utf-8") as f:
+            want = set(l.rstrip("\n") for l in f if l.strip())
+        rows = [r for r in rows if r[0] in want]
     key = load_key(state)
     pseudo.set_key(key)
-    d = build_dictionary(rows if not args.prefix_filter else read_manifest(man), state)
+    d = build_dictionary(read_manifest(man), state)
     dict_path = os.path.join(adir, "dictionary.json")
     d.save(dict_path)
     with open(os.path.join(adir, "mapping.private.json"), "w") as f:
@@ -381,7 +394,7 @@ def run(args):
         prev_prefix = prefix.rstrip("/").rsplit("/", 1)[0] + "/attempt-%s/" % args.reuse_from
     cfg = {"key": key.hex(), "dict": dict_path, "token_file": args.token_file,
            "in_host": urllib.parse.urlparse(args.base).netloc, "bucket": bucket, "prefix": prefix,
-           "prev_prefix": prev_prefix, "dry": args.dry}
+           "prev_prefix": prev_prefix, "dry": args.dry, "input_cache": getattr(args, "input_cache", "")}
     is_copy = lambda r: len(r) > 4 and isinstance(r[4], dict)
     small = [r for r in todo if r[1] < BIG or is_copy(r)]
     big = [r for r in todo if r[1] >= BIG and not is_copy(r)]

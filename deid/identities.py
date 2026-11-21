@@ -84,6 +84,9 @@ VENDOR_DOMAINS = (
     "iso.org", "aiim.org", "npes.org", "color.org", "iptc.org", "schema.org", "xml.org",
     "kicad.org", "kicad-pcb.org", "python.org", "example.com", "example.org", "localhost",
     "dublincore.org", "oasis-open.org", "khronos.org", "web3d.org", "opengis.net", "ogp.me",
+    "doi.org", "arxiv.org", "wikipedia.org", "wikimedia.org", "youtube.com", "youtu.be", "zenodo.org",
+    "orcid.org", "opensource.org", "cern.ch", "ohwr.org", "amazon.com", "amzn.to", "aliexpress.com",
+    "ebay.com", "bit.ly", "goo.gl", "tinyurl.com",
 )
 
 # Organisations / people named in the collection titles and site names of the corpus
@@ -146,6 +149,17 @@ def is_first_name(low):
     return low in _NAMES
 
 
+_SURNAMES = None
+
+
+def is_surname(low):
+    global _SURNAMES
+    if _SURNAMES is None:
+        with gzip.open(os.path.join(HERE, "data", "surnames.txt.gz"), "rt") as f:
+            _SURNAMES = set(f.read().split())
+    return low in _SURNAMES
+
+
 def is_word(low):
     return low in words()
 
@@ -198,6 +212,9 @@ def split_repo_component(component):
     return parts[:-1], parts[-1]
 
 
+CAMEL_RE = re.compile(r"[A-Z][a-z]+|[a-z]+|[A-Z]+(?![a-z])")
+
+
 class Dictionary(object):
     def __init__(self):
         self.strong = set()      # lower-case atoms replaced everywhere
@@ -243,6 +260,15 @@ class Dictionary(object):
             owners, repo = split_repo_component(comp)
             for o in owners:
                 self.add_name(o, scope, force_scoped=True)
+                olows = [a.lower() for a in ATOM_RE.findall(o)]
+                if len(olows) > 1 and not all(strong_atom(a) or a in STOP for a in olows) and "-".join(olows) not in self.phrases:
+                    # short compound account names ("joe-bn"): whole phrase, own repository
+                    self.scoped_phrases.setdefault(scope, []).append(olows)
+                # CamelCase account names: the distinctive halves also occur on their own
+                for part in CAMEL_RE.findall(o):
+                    pl = part.lower()
+                    if len(pl) >= 4 and pl not in STOP and not is_word(pl) and not pl.isdigit():
+                        self.scoped.setdefault(scope, set()).add(pl)
             if repo:
                 self.add_repo_name(repo, scope)
 
