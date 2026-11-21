@@ -128,7 +128,11 @@ PROSE_PHONE = re.compile(
     r"|(?<![\w.,/-])(?P<b>\+\d{1,3}[ .-]?\(?\d{1,4}\)?(?:[ .-]?\d{2,4}){2,4})(?![\w.,/-])"
     r"|(?<![\w.,/-])(?P<c>\(\d{3}\)[ ]?\d{3}[-.]\d{4}|\d{3}[-.]\d{3}[-.]\d{4})(?![\w.,/-]))")
 PROSE_ADDR = re.compile("(?<![A-Za-z0-9])(?P<city>(?:%s[ \t]+){0,2}%s),[ \t]+(?P<st>[A-Z]{2})[ \t]+(?P<zip>\\d{5}(?:-\\d{4})?)(?![A-Za-z0-9])" % (_CAPW, _CAPW))
-PROSE_STOP = set("""drawing drawn title scale sheet size date name rev revision material finish weight tolerance tolerances
+LEGAL_SUFFIX = re.compile(r"(?:Inc|Incorporated|LLC|L\.L\.C|Ltd|Limited|GmbH|AG|KG|Corp|Corporation|S\.A|SA|S\.L|SL|S\.r\.l|Srl|SRL|"
+                          r"B\.V|BV|N\.V|NV|Pty|PLC|plc|A/S|AB|Oy|Kft|s\.r\.o|Sdn Bhd|Pvt|LLP|e\.V)$")
+DETERMINERS = set("their its his her our your the this that these those every each any all some no their's respective".split())
+PROSE_STOP = set("""key allen phillips hex torx socket wrench driver respective owners holders with without
+drawing drawn title scale sheet size date name rev revision material finish weight tolerance tolerances
 dimensions dimension unless otherwise specified third angle projection do not scale part number qty quantity item description
 assembly section detail view top bottom front back left right side general notes note approved checked designed engineer
 all rights reserved proprietary confidential information contained this sole property any reproduction written permission
@@ -493,7 +497,7 @@ class Engine(object):
             else:
                 span(m.start("first"), m.start("last") + len(lasts[0]), "pdf-person", True)
         for m in PROSE_INITIAL.finditer(text):
-            if cls(m.group("last")) in ("N", "L") and len(m.group("last")) >= 4:
+            if cls(m.group("last")) == "N" and len(m.group("last")) >= 4:
                 span(m.start("last"), m.end("last"), "pdf-person", True)
         for m in PROSE_LABEL.finditer(text):
             toks = m.group("name").split()
@@ -508,7 +512,7 @@ class Engine(object):
                 continue
             if any(c in ("N", "F") for c in classes):
                 span(m.start("name"), m.end("name"), "pdf-org", only=lambda t: cls(t) in ("N", "F", "L"))
-            elif len(toks) >= 2 and all(c in ("W", "L") for c in classes):
+            elif len(toks) >= 2 and all(c in ("W", "L") for c in classes) and LEGAL_SUFFIX.match(m.group("suf")):
                 span(m.start("name"), m.end("name"), "pdf-org")
         for m in PROSE_ORG_PREFIX.finditer(text):
             toks = m.group("name").split()
@@ -516,11 +520,13 @@ class Engine(object):
                 span(m.start("name"), m.end("name"), "pdf-org")
         for m in PROSE_COPYRIGHT.finditer(text):
             toks = [t for t in m.group("name").replace(",", " ").split()]
-            if toks and cls(toks[0]) != "S":
+            if toks and toks[0][0].isalpha() and cls(toks[0]) != "S" and toks[0].lower() not in DETERMINERS:
                 span(m.start("name"), m.end("name"), "pdf-org")
         for m in PROSE_PROPERTY.finditer(text):
             v = m.group("name").strip()
-            if v and v[0].isalpha() and "insert" not in v.lower() and "company name" not in v.lower():
+            first = v.split()[0] if v.split() else ""
+            if (first and first[0].isupper() and first.lower() not in DETERMINERS
+                    and "insert" not in v.lower() and "company name" not in v.lower()):
                 span(m.start("name"), m.end("name"), "pdf-org")
         for m in PROSE_URL.finditer(text):
             host = m.group("host").lower()

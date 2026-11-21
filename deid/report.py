@@ -127,8 +127,12 @@ def promote(state):
     from . import pseudo
     from .identities import SOFTWARE, STOP, VENDOR_DOMAINS, is_first_name, is_word, scope_of
     kinds = ("user", "host", "email", "step-author", "pdf-author", "ole-property", "xml-field",
-             "dxf-savedby", "iges-author", "png-author", "ps-for")
-    person_kinds = ("user", "email", "step-author", "pdf-author", "ole-property", "iges-author", "xml-field")
+             "dxf-savedby", "iges-author", "png-author", "ps-for", "account", "pdf-person", "pdf-org", "pdf-url")
+    person_kinds = ("user", "email", "step-author", "pdf-author", "ole-property", "iges-author", "xml-field", "pdf-person")
+    # names read from running prose are promoted only when seen in at least two files
+    prose_kinds = ("pdf-person", "pdf-org", "pdf-url")
+    prose_files = collections.defaultdict(set)
+    firm = set()
     vendor_words = set()
     for d in VENDOR_DOMAINS:
         vendor_words.update(ATOM_RE.findall(d.lower()))
@@ -159,7 +163,11 @@ def promote(state):
                     continue
                 if strong_atom(low) and len(low) >= 5:
                     strong[low] += 1
-                elif kind in person_kinds and len(low) >= 4 and is_first_name(low):
+                    if kind in prose_kinds:
+                        prose_files[low].add(rec["path"])
+                    else:
+                        firm.add(low)
+                elif kind in person_kinds and kind not in prose_kinds and len(low) >= 4 and is_first_name(low):
                     scoped[scope].add(low)
     try:
         made = {pseudo.atom(a) for a in strong}
@@ -177,7 +185,8 @@ def promote(state):
                 for a in ATOM_RE.findall(path.lower()):
                     if a in strong and len(spread[a]) < 3:
                         spread[a].add(sc)
-    keep = sorted(a for a in strong if a not in made and len(spread[a]) < 3 and not _WIDGET.search(a))
+    keep = sorted(a for a in strong if a not in made and len(spread[a]) < 3 and not _WIDGET.search(a)
+                  and (a in firm or len(prose_files[a]) >= 2))
     out = {"strong": keep, "scoped": {k: sorted(v) for k, v in scoped.items()}}
     with open(os.path.join(state, "discovered.json"), "w") as f:
         json.dump(out, f)
