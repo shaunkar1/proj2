@@ -113,6 +113,9 @@ _PLACEHOLDER = re.compile(r"^(?:org|per|person|title|id|user|usuario|owner|autho
 _PARTNO = re.compile(r"^\d{4,}[a-z]\d{2,}$|^\d+(?:mm|vac|vdc|cm|in|phi|x\d+.*)$|^[0-9a-f]{12,}$|^0x[0-9a-f]+$")
 
 
+_PHRASE_STOP = set("""and the before after etc with without from into for set code all alle les del los las des der die das
+variation model type fan hotend drill long short left right upper lower front rear top bottom inner outer new old car smart
+robotics automation engineering mathematics aeronautics astronautics solenoids corporation instruments national forum""".split())
 _WIDGET = re.compile(r"view|button|page\d|print|select|carousel|scroll|click|toggle|layer\d")
 
 
@@ -152,11 +155,14 @@ def promote(state):
         for kind, value in rec.get("findings", []):
             if kind not in kinds:
                 continue
-            if kind in ("pdf-person", "pdf-org"):
+            if kind == "pdf-person":
                 # full names seen in running text: replaced as a phrase wherever they recur
-                toks = ATOM_RE.findall(value)
-                if 2 <= len(toks) <= 4 and all(t.isalpha() and len(t) >= 2 for t in toks) and value.isascii():
-                    phrase_files[" ".join(t.lower() for t in toks)].add(rec["path"])
+                toks = [t.lower() for t in ATOM_RE.findall(value)]
+                if (2 <= len(toks) <= 3 and all(t.isalpha() and len(t) >= 3 for t in toks) and value.isascii()
+                        and not any(t in STOP or t in _PHRASE_STOP for t in toks)
+                        and any(is_first_name(t) or not is_word(t) for t in toks)
+                        and not all(is_word(t) and not is_first_name(t) for t in toks)):
+                    phrase_files[" ".join(toks)].add(rec["path"])
             if kind == "email" and "@" in value:
                 value = value.split("@", 1)[0]          # the mailbox, not the provider
             if "~" in value:
@@ -193,8 +199,11 @@ def promote(state):
                         spread[a].add(sc)
     keep = sorted(a for a in strong if a not in made and len(spread[a]) < 3 and not _WIDGET.search(a)
                   and (a in firm or len(prose_files[a]) >= 2))
+    def solid(ph):
+        # every word a name or a non-word: two files are enough; otherwise three
+        return all(is_first_name(x) or not is_word(x) for x in ph.split())
     phrases = sorted(ph for ph, files in phrase_files.items()
-                     if len(files) >= 2 and not all(x in STOP for x in ph.split()))
+                     if len(files) >= (2 if solid(ph) else 3))
     out = {"strong": keep, "scoped": {k: sorted(v) for k, v in scoped.items()}, "phrases": phrases}
     with open(os.path.join(state, "discovered.json"), "w") as f:
         json.dump(out, f)
