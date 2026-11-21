@@ -68,6 +68,7 @@ zeichnung blatt ansicht teil baugruppe plano hoja dibujo conjunto pieza dessin f
 def _own_title_words(path, ctx):
     """Experiment: the words of a document's own file name (its part / drawing title) are
     treated as identifying and replaced wherever the document repeats them."""
+    from .identities import is_word
     stem = path.rsplit("/", 1)[-1]
     stem = stem[:stem.rfind(".")] if "." in stem else stem
     for tok in re.findall("[A-Za-z0-9]+", stem):
@@ -75,8 +76,8 @@ def _own_title_words(path, ctx):
         if low in _OWN_GENERIC or low in ctx.produced:
             continue
         if low.isalpha():
-            if len(low) >= 4:
-                ctx.local_wide.add(low)
+            if len(low) >= 4 or (len(low) == 3 and tok.isupper() and not is_word(low)):
+                ctx.local_wide.add(low)     # a word of the title, or initials ("..._EJG.pdf")
         elif low.isdigit():
             if len(low) >= 5:
                 ctx.local_wide.add(low)

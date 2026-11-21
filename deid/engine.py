@@ -132,6 +132,13 @@ PROSE_SIGNED = re.compile(
     "(?<![A-Za-z])(?:DRAWN BY|DRAWN|CHECKED BY|CHECKED|CHK'?D|APPV'?D|APPR'?D|APPROVED BY|APPROVED|DESIGNED BY|DESIGNED|DRN|CHKD|"
     "ENG APPR\\.?|MFG APPR\\.?|Q\\.A\\.?|QA)[ \t]+(?P<name>[A-Z]{2,4}|[a-z]{3,12}|[A-Z]\\.[ \t]?[A-Z][a-z]+|[A-Z][a-z]+(?:[ \t][A-Z][a-z]+)?)"
     "[ \t]+(?=[0-9]{1,4}[/.\\-][0-9]{1,2}[/.\\-][0-9]{1,4})")
+# revision tables and signature cells: initials directly before a date ("BJD 2/27/12")
+PROSE_INITIALS_DATE = re.compile(
+    "(?<![A-Za-z0-9])(?P<name>[A-Z]{2,4})[ \t]+(?=[0-9]{1,2}[/.\\-][0-9]{1,2}[/.\\-](?:[0-9]{2}|[0-9]{4})(?![0-9]))")
+_NOT_INITIALS = set("""rev date ecn eco dwg qty mfg appr nts tbd ref typ max min dia thk iso din ansi sym chg dcn pcn new old was
+per see by on of no id unc unf npt qa sht cad pdf std jan feb mar apr may jun jul aug sep sept oct nov dec mon tue wed thu fri
+sat sun am pm mm cm in ft kg lb oz to at is as or an it we us eu uk usa on up do go ok vs ver doc dim tol mat est due end run
+due day wk yr qc pn sn po so wo ex inc ltd co num nr nro nom sig rel iss iso bs en ed vol pg pp fig tab sec app""".split())
 # a line of digit groups right under / above an e-mail or web address: a phone number
 PROSE_BARE_PHONE = re.compile("(?m)^[ \t]*(?P<p>\\+?[0-9]{2,4}(?:[ .\\-][0-9]{2,4}){2,4})[ \t]*$")
 PROSE_PARTNO = re.compile(
@@ -658,7 +665,10 @@ class Engine(object):
         # title stays in step with the names of the model files it belongs to
         own = getattr(ctx, "_own", None)
         if own is None:
-            own = ctx._own = set(x.lower() for x in ATOM_RE.findall(ctx.path.rsplit("/", 1)[-1]))
+            if os.environ.get("DEID_PDF_OWNSKIP") == "0":
+                own = ctx._own = set()      # names found in the text are replaced even when the file name repeats them
+            else:
+                own = ctx._own = set(x.lower() for x in ATOM_RE.findall(ctx.path.rsplit("/", 1)[-1]))
 
         def span(a, b, kind, person=False, only=None):
             value = text[a:b]
@@ -761,6 +771,12 @@ class Engine(object):
             if v.islower() and (is_word(low) or is_foreign_word(low)):
                 continue
             if v.isupper() and len(v) == 4 and is_word(low):
+                continue
+            span(m.start("name"), m.end("name"), "pdf-person", True)
+        for m in PROSE_INITIALS_DATE.finditer(text):
+            v = m.group("name")
+            low = v.lower()
+            if low in _NOT_INITIALS or low in PROSE_STOP or low in STOP or (len(v) >= 3 and is_word(low) and not is_first_name(low)):
                 continue
             span(m.start("name"), m.end("name"), "pdf-person", True)
         for m in PROSE_BARE_PHONE.finditer(text):
