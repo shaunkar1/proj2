@@ -498,6 +498,22 @@ class Engine(object):
         occupied.append((s, e))
         ctx.produced.add(r.lower())
 
+    def maybe(self, data, ctx):
+        """Cheap test: could ``data`` contain any identity if word boundaries are ignored?
+        (Used on glyph-by-glyph PDF text, where boundaries are only known after layout.)"""
+        low = data.lower()
+        for name in ctx.local_wide:
+            if name.encode("latin-1", "replace") in low:
+                return True
+        for name in ctx.local_exact:
+            if name.encode("latin-1", "replace") in data:
+                return True
+        for s, e, entries in self._candidates(low.decode("latin-1")):
+            for entry in entries:
+                if not entry.wide and (entry.scopes is None or ctx.scope in entry.scopes):
+                    return True
+        return False
+
     # -- strings (paths, names, decoded metadata) ---------------------
     def rename(self, value, ctx):
         """Apply corpus-wide identities only (file and folder names, archive members)."""

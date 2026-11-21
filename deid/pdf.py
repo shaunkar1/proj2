@@ -114,13 +114,31 @@ def _walk(obj, engine, ctx, seen, depth=0):
 
 class _Font(object):
     """Code <-> Unicode tables of one PDF font (None tables = bytes are text)."""
-    __slots__ = ("width", "to_uni", "from_uni", "ok")
+    __slots__ = ("width", "to_uni", "from_uni", "ok", "adv", "adv_default", "embedded", "used")
 
     def __init__(self):
         self.width = 1
         self.to_uni = None
         self.from_uni = None
         self.ok = True
+        self.adv = None          # code -> advance in 1/1000 em
+        self.adv_default = None
+        self.embedded = False
+        self.used = set()        # codes this document already draws with the font
+
+    def advance(self, raw):
+        """Advance of a string in 1/1000 em, or None when widths are unknown."""
+        if self.adv is None:
+            return None
+        total = 0
+        w = self.width
+        for i in range(0, len(raw) - w + 1, w):
+            code = int.from_bytes(raw[i:i + w], "big")
+            a = self.adv.get(code, self.adv_default)
+            if a is None:
+                return None
+            total += a
+        return total
 
 
 _BFCHAR = re.compile(rb"beginbfchar(.*?)endbfchar", re.S)
@@ -176,12 +194,43 @@ def _font_info(font, cache):
     try:
         subtype = str(font.get("/Subtype", ""))
         enc = font.get("/Encoding")
+        fd = font.get("/FontDescriptor")
+        if fd is not None and any(k in fd for k in ("/FontFile", "/FontFile2", "/FontFile3")):
+            info.embedded = True
         if subtype == "/Type0":
             info.width = 2
             if enc is None or str(enc) not in ("/Identity-H", "/Identity-V"):
                 info.ok = False
         elif isinstance(enc, pikepdf.Dictionary) and "/Differences" in enc and "/ToUnicode" not in font:
             info.ok = False
+        try:
+            if subtype == "/Type0":
+                df = font["/DescendantFonts"][0]
+                info.adv_default = float(df.get("/DW", 1000))
+                info.adv = {}
+                warr = df.get("/W")
+                if warr is not None:
+                    items = list(warr)
+                    i = 0
+                    while i < len(items) and i < 40000:
+                        first = int(items[i])
+                        nxt = items[i + 1]
+                        if isinstance(nxt, pikepdf.Array):
+                            for k, wv in enumerate(nxt):
+                                info.adv[first + k] = float(wv)
+                            i += 2
+                        else:
+                            last = int(nxt)
+                            wv = float(items[i + 2])
+                            if last - first < 70000:
+                                for c in range(first, last + 1):
+                                    info.adv[c] = wv
+                            i += 3
+            elif "/Widths" in font:
+                fc = int(font.get("/FirstChar", 0))
+                info.adv = {fc + k: float(wv) for k, wv in enumerate(font["/Widths"])}
+        except Exception:
+            info.adv = None
         tu = font.get("/ToUnicode")
         if tu is not None and info.ok:
             table = _parse_tounicode(tu.read_bytes())
@@ -226,9 +275,15 @@ def _encode_changes(raw, old, new, spans, info):
     """Re-encode ``raw`` so that it shows ``new`` instead of ``old``; None if a glyph is missing."""
     if info.to_uni is None:
         try:
-            return new.encode("latin-1")
+            enc = new.encode("latin-1")
         except UnicodeEncodeError:
             return None
+        if info.embedded:
+            # an embedded font program may hold only the glyphs the document uses
+            for o, n in zip(raw, enc):
+                if o != n and n not in info.used:
+                    return None
+        return enc
     w = info.width
     out = bytearray(raw)
     for idx, (a, b) in enumerate(spans):
@@ -287,7 +342,7 @@ def _content_stream(target, raw, engine, ctx, resources=None, pdf=None, fcache=N
     pieces = _strings_of(raw)
     if not pieces:
         return None
-    probes = [b"\n".join(pieces), b"".join(pieces)]
+    probes = [b"\n".join(pieces), b"".join(pieces)]   # odd indexes: concatenated forms
     for fi in infos[:6]:
         try:
             dec = [_decode(pc, fi)[0] for pc in pieces]
@@ -295,26 +350,59 @@ def _content_stream(target, raw, engine, ctx, resources=None, pdf=None, fcache=N
             probes.append("".join(dec).encode("utf-8", "replace"))
         except Exception:
             pass
-    if all(engine.scrub(pr, ctx, False, "") == pr for pr in probes):
+    if all(engine.scrub(pr, ctx, False, "") == pr for pr in probes) and not any(engine.maybe(pr, ctx) for pr in probes[1::2]):
         return None
     try:
         ops = pikepdf.parse_content_stream(stream)
     except Exception:
         return None
-    changed = False
-    need_helv = False
-    new_ops = []
-    cur = None          # (font name, size operand)
-    stack = []
+    ops = [(list(operands), operator) for operands, operator in ops]
     default = _Font()
-    for operands, operator in ops:
+    ident = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+
+    def mul(m, n):
+        return (m[0] * n[0] + m[1] * n[2], m[0] * n[1] + m[1] * n[3],
+                m[2] * n[0] + m[3] * n[2], m[2] * n[1] + m[3] * n[3],
+                m[4] * n[0] + m[5] * n[2] + n[4], m[4] * n[1] + m[5] * n[3] + n[5])
+
+    def num(x):
+        try:
+            return float(x)
+        except Exception:
+            return 0.0
+
+    ctm = ident
+    tm = tlm = ident
+    cur = None
+    stack = []
+    units = []        # one per string piece
+    vtext = []
+    vmap = []
+    last = None       # (start position, advance or None, size, nchars) of the previous text op
+    moved = True      # a positioning operator ran since the previous text op
+    for oi, (operands, operator) in enumerate(ops):
         op = str(operator)
         if op == "q":
-            stack.append(cur)
+            stack.append((ctm, cur))
         elif op == "Q":
-            cur = stack.pop() if stack else cur
+            if stack:
+                ctm, cur = stack.pop()
+        elif op == "cm" and len(operands) >= 6:
+            ctm = mul(tuple(num(x) for x in operands[:6]), ctm)
+        elif op == "BT":
+            tm = tlm = ident
+            moved = True
         elif op == "Tf" and len(operands) >= 2:
             cur = (operands[0], operands[1])
+        elif op == "Tm" and len(operands) >= 6:
+            tm = tlm = tuple(num(x) for x in operands[:6])
+            moved = True
+        elif op in ("Td", "TD") and len(operands) >= 2:
+            tlm = mul((1.0, 0.0, 0.0, 1.0, num(operands[0]), num(operands[1])), tlm)
+            tm = tlm
+            moved = True
+        elif op == "T*":
+            moved = True
         elif op in TEXT_OPS and operands:
             info = default
             if cur is not None and fonts is not None:
@@ -322,60 +410,171 @@ def _content_stream(target, raw, engine, ctx, resources=None, pdf=None, fcache=N
                     info = _font_info(fonts[str(cur[0])], fcache)
                 except Exception:
                     info = default
-            if info.ok:
-                operands = list(operands)
-                if op == "TJ" and isinstance(operands[0], pikepdf.Array):
-                    arr = list(operands[0])
-                    idx = [i for i in range(len(arr)) if isinstance(arr[i], pikepdf.String)]
+            if op in ("'", '"'):
+                moved = True
+            if not info.ok:
+                last = None
+                moved = True
+                continue
+            if op == "TJ" and isinstance(operands[0], pikepdf.Array):
+                arr = list(operands[0])
+                operands[0] = arr
+                src = arr
+            else:
+                src = operands
+                arr = None
+            first_piece = True
+            size = abs(num(cur[1])) if cur is not None else 1.0
+            full = mul(tm, ctm)
+            scale = (full[0] ** 2 + full[1] ** 2) ** 0.5 or 1.0
+            eff = size * scale or 1.0
+            pos = (full[4], full[5])
+            op_adv = 0.0
+            op_chars = 0
+            pending_space = False
+            for pi, item in enumerate(src):
+                if not isinstance(item, pikepdf.String):
+                    if arr is not None and not isinstance(item, (pikepdf.Array, pikepdf.Dictionary)):
+                        if num(item) <= -250:
+                            pending_space = True
+                    continue
+                if arr is None and pi != len(src) - 1:
+                    continue
+                rawp = bytes(item)
+                txt, spans = _decode(rawp, info)
+                if not txt:
+                    continue
+                if info.to_uni is None and info.embedded:
+                    info.used.update(rawp)
+                sep = ""
+                if first_piece:
+                    if not vtext:
+                        sep = ""
+                    elif not moved:
+                        sep = ""
+                    elif last is None:
+                        sep = "\n"
+                    else:
+                        (lx, ly), ladv, lsize, ln = last
+                        dist = ((pos[0] - lx) ** 2 + (pos[1] - ly) ** 2) ** 0.5
+                        ref = max(eff, lsize)
+                        if ladv is not None:
+                            gap = dist - ladv
+                            sep = "" if abs(gap) <= 0.2 * ref else " " if 0 < gap <= 1.3 * ref else "\n"
+                        elif ln == 1:
+                            sep = "" if dist <= 0.85 * ref else " " if dist <= 1.7 * ref else "\n"
+                        else:
+                            sep = "\n"
+                elif pending_space:
+                    sep = " "
+                pending_space = False
+                first_piece = False
+                if sep:
+                    vtext.append(sep)
+                    vmap.append(None)
+                u = len(units)
+                units.append({"op": oi, "pi": pi, "raw": rawp, "txt": txt, "spans": spans, "info": info, "arr": arr is not None})
+                for ci, ch in enumerate(txt):
+                    vtext.append(ch)
+                    vmap.append((u, ci))
+                a = info.advance(rawp)
+                if a is None or op_adv is None:
+                    op_adv = None
                 else:
-                    arr = None
-                    idx = [len(operands) - 1] if isinstance(operands[-1], pikepdf.String) else []
-                src = arr if arr is not None else operands
-                pieces = [bytes(src[i]) for i in idx]
-                decoded = [_decode(pc, info) for pc in pieces]
-                old = "".join(d[0] for d in decoded)
-                if old and "�" not in old:
-                    new = engine.scrub_text(old, ctx)
-                    if new != old and len(new) == len(old):
-                        pos = 0
-                        enc = []
-                        for (txt, spans), pc in zip(decoded, pieces):
-                            seg_old = old[pos:pos + len(txt)]
-                            seg_new = new[pos:pos + len(txt)]
-                            pos += len(txt)
-                            enc.append(pc if seg_old == seg_new else _encode_changes(pc, seg_old, seg_new, spans, info))
-                        if all(e is not None for e in enc):
-                            for i, e in zip(idx, enc):
-                                src[i] = pikepdf.String(e)
-                            if arr is not None:
-                                operands[0] = pikepdf.Array(arr)
-                            changed = True
-                        elif cur is not None and pdf is not None and resources is not None:
-                            # the subset font lacks a glyph: draw this string with Helvetica
-                            try:
-                                shown = new.encode("cp1252")
-                            except UnicodeEncodeError:
-                                shown = None
-                            if shown is not None:
-                                if op in ("'", '"'):
-                                    new_ops.append(([], pikepdf.Operator("T*")))
-                                new_ops.append(([pikepdf.Name("/DeidHelv"), cur[1]], pikepdf.Operator("Tf")))
-                                new_ops.append(([pikepdf.String(shown)], pikepdf.Operator("Tj")))
-                                new_ops.append(([cur[0], cur[1]], pikepdf.Operator("Tf")))
-                                need_helv = True
-                                changed = True
-                                continue
-        new_ops.append((operands, operator))
-    if changed:
-        if need_helv:
+                    op_adv += a * eff / 1000.0
+                op_chars += len(txt)
+            if not first_piece:
+                last = (pos, op_adv, eff, op_chars)
+                moved = False
+    if not units:
+        return None
+    old = "".join(vtext)
+    if "�" in old:
+        old_clean = old.replace("�", "\x00")
+    else:
+        old_clean = old
+    new = engine.scrub_text(old_clean, ctx)
+    if new == old_clean or len(new) != len(old_clean):
+        return None
+    changes = {}
+    for j, (o, n) in enumerate(zip(old_clean, new)):
+        if o != n and vmap[j] is not None:
+            u, ci = vmap[j]
+            changes.setdefault(u, {})[ci] = n
+    if not changes:
+        return None
+    fallback_ops = set()
+    for u, repl in changes.items():
+        unit = units[u]
+        txt = unit["txt"]
+        newtxt = "".join(repl.get(i, c) for i, c in enumerate(txt))
+        unit["new"] = newtxt
+        enc = _encode_changes(unit["raw"], txt, newtxt, unit["spans"], unit["info"])
+        if enc is None:
+            fallback_ops.add(unit["op"])
+        else:
+            unit["enc"] = enc
+    by_op = {}
+    for unit in units:
+        by_op.setdefault(unit["op"], []).append(unit)
+    need_helv = False
+    out_ops = []
+    cur = None
+    stack = []
+    for oi, (operands, operator) in enumerate(ops):
+        op = str(operator)
+        if op == "q":
+            stack.append(cur)
+        elif op == "Q":
+            cur = stack.pop() if stack else cur
+        elif op == "Tf" and len(operands) >= 2:
+            cur = (operands[0], operands[1])
+        us = by_op.get(oi)
+        if us and oi in fallback_ops and cur is not None and pdf is not None and resources is not None:
+            # the embedded subset font lacks a needed glyph: draw this string with Helvetica
+            if us[0]["arr"]:
+                parts = []
+                for item in operands[0]:
+                    if isinstance(item, pikepdf.String):
+                        unit = next((x for x in us if operands[0][x["pi"]] is item), None)
+                        parts.append(unit.get("new", unit["txt"]) if unit else "")
+                    elif not isinstance(item, (pikepdf.Array, pikepdf.Dictionary)) and num(item) <= -250:
+                        parts.append(" ")
+                shown_txt = "".join(parts)
+            else:
+                shown_txt = us[0].get("new", us[0]["txt"])
             try:
-                if "/Font" not in resources:
-                    resources["/Font"] = pikepdf.Dictionary()
-                resources["/Font"]["/DeidHelv"] = _helv(pdf, holder if holder is not None else {})
-            except Exception:
-                return None
-        return pikepdf.unparse_content_stream(new_ops)
-    return None
+                shown = shown_txt.encode("cp1252")
+            except UnicodeEncodeError:
+                shown = None
+            if shown is not None:
+                if op in ("'", '"'):
+                    out_ops.append(([], pikepdf.Operator("T*")))
+                out_ops.append(([pikepdf.Name("/DeidHelv"), cur[1]], pikepdf.Operator("Tf")))
+                out_ops.append(([pikepdf.String(shown)], pikepdf.Operator("Tj")))
+                out_ops.append(([cur[0], cur[1]], pikepdf.Operator("Tf")))
+                need_helv = True
+                continue
+        if us:
+            for unit in us:
+                if "enc" in unit:
+                    if unit["arr"]:
+                        operands[0][unit["pi"]] = pikepdf.String(unit["enc"])
+                    else:
+                        operands[unit["pi"]] = pikepdf.String(unit["enc"])
+        if us and us[0]["arr"]:
+            operands = [pikepdf.Array(operands[0])] + list(operands[1:])
+        elif op == "TJ" and operands and isinstance(operands[0], list):
+            operands = [pikepdf.Array(operands[0])] + list(operands[1:])
+        out_ops.append((operands, operator))
+    if need_helv:
+        try:
+            if "/Font" not in resources:
+                resources["/Font"] = pikepdf.Dictionary()
+            resources["/Font"]["/DeidHelv"] = _helv(pdf, holder if holder is not None else {})
+        except Exception:
+            return None
+    return pikepdf.unparse_content_stream(out_ops)
 
 
 def _process(pdf, path, engine, ctx, depth):
