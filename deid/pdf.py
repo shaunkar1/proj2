@@ -171,14 +171,22 @@ def _all_properties(pdf, engine, keep=()):
     return done
 
 
-def _nuke(pdf, engine):
-    _all_properties(pdf, engine)
+def _blank_all_images(pdf):
+    """Experiment only: every picture becomes an empty one of the same size."""
+    done = False
     for obj in pdf.objects:
         try:
             if isinstance(obj, pikepdf.Stream) and str(obj.get("/Subtype", "")) == "/Image":
-                _blank_image(obj, 255)
+                if _blank_image(obj, 255):
+                    done = True
         except Exception:
             pass
+    return done
+
+
+def _nuke(pdf, engine):
+    _all_properties(pdf, engine)
+    _blank_all_images(pdf)
 
 
 def _process_file(path, data, engine, ctx, depth):
@@ -207,6 +215,9 @@ def _process_file(path, data, engine, ctx, depth):
             # every document property (title, subject, keywords, author, producing program)
             # is treated as an identity field
             if _all_properties(pdf, engine):
+                changed = True
+        if os.environ.get("DEID_PDF_IMAGES") == "blank":
+            if _blank_all_images(pdf):
                 changed = True
         if os.environ.get("DEID_PDF_NUKE") == "1":
             # experiment only: nothing readable is left in the document - no page text, no
