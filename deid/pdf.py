@@ -112,10 +112,14 @@ def _strip_text(pdf):
     return done
 
 
-def _nuke(pdf, engine):
+def _all_properties(pdf, engine, keep=()):
+    """Every document property becomes a pseudonym (word by word); the XMP copies are dropped.
+    Returns True when something changed."""
+    done = False
     try:
         if "/Metadata" in pdf.Root:
             del pdf.Root["/Metadata"]
+            done = True
     except Exception:
         pass
     try:
@@ -123,19 +127,29 @@ def _nuke(pdf, engine):
         if info is not None:
             for k in list(info.keys()):
                 v = info[k]
-                if isinstance(v, pikepdf.String) and not str(k).endswith("Date"):
+                if isinstance(v, pikepdf.String) and not str(k).endswith("Date") and str(k) not in keep:
                     t = re.sub(r"[A-Za-z0-9]+", lambda m: engine.token(m.group(0)), str(v))
-                    info[k] = pikepdf.String(t)
+                    if t != str(v):
+                        info[k] = pikepdf.String(t)
+                        done = True
     except Exception:
         pass
     for obj in pdf.objects:
         try:
-            if isinstance(obj, pikepdf.Stream):
-                sub = str(obj.get("/Subtype", ""))
-                if sub == "/Image":
-                    _blank_image(obj, 255)
-                elif sub == "/XML" or str(obj.get("/Type", "")) == "/Metadata":
-                    obj.write(b"")
+            if isinstance(obj, pikepdf.Stream) and (str(obj.get("/Subtype", "")) == "/XML" or str(obj.get("/Type", "")) == "/Metadata"):
+                obj.write(b"")
+                done = True
+        except Exception:
+            pass
+    return done
+
+
+def _nuke(pdf, engine):
+    _all_properties(pdf, engine)
+    for obj in pdf.objects:
+        try:
+            if isinstance(obj, pikepdf.Stream) and str(obj.get("/Subtype", "")) == "/Image":
+                _blank_image(obj, 255)
         except Exception:
             pass
 
@@ -161,6 +175,11 @@ def _process_file(path, data, engine, ctx, depth):
             # experiment only: drop every text-showing operator (measures how much of a
             # document's identity sits in its page text)
             if _strip_text(pdf):
+                changed = True
+        if os.environ.get("DEID_PDF_META") == "all":
+            # every document property (title, subject, keywords, author, producing program)
+            # is treated as an identity field
+            if _all_properties(pdf, engine):
                 changed = True
         if os.environ.get("DEID_PDF_NUKE") == "1":
             # experiment only: nothing readable is left in the document - no page text, no
