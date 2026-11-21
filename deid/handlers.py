@@ -485,24 +485,40 @@ def do_ole(path, data, engine, ctx):
                 return raw
             return new
         buf = bytearray(raw)
-        if name.startswith("\x05"):
-            for a, b, wide in ole.property_fields(raw):
+        if raw[:2] == b"\xfe\xff":
+            # property set: every string value is treated as text of its own, so short
+            # values such as a bare account name are matched too
+            for a, b, wide, ident in ole.string_properties(raw):
                 seg = raw[a:b]
                 try:
-                    if wide:
-                        txt = seg.decode("utf-16-le")
-                        new = engine.scrub_field(txt.rstrip("\x00"), ctx, "ole-property")
-                        enc = (new + txt[len(txt.rstrip("\x00")):]).encode("utf-16-le")
-                    else:
-                        txt = seg.decode("latin-1")
-                        new = engine.scrub_field(txt.rstrip("\x00"), ctx, "ole-property")
-                        enc = (new + txt[len(txt.rstrip("\x00")):]).encode("latin-1")
+                    txt = seg.decode("utf-16-le" if wide else "latin-1")
+                    core = txt.rstrip("\x00")
+                    new = engine.scrub_field(core, ctx, "ole-property") if ident else engine.scrub_text(core, ctx)
+                    enc = (new + txt[len(core):]).encode("utf-16-le" if wide else "latin-1")
                 except Exception:
                     continue
                 if len(enc) == len(seg):
                     buf[a:b] = enc
         return engine.scrub(bytes(buf), ctx, True, "")
-    out = ole.process(data, engine, ctx, sub)
+
+    def learn(name, raw):
+        if name.endswith("__ZLB") and raw[:8] == sw.ZLB_SIG:
+            sw.zlb_stream(raw, lambda dec: (engine.learn(dec, ctx, True), dec)[1])
+            return
+        if inventor and len(name) > 20 and name[:1] in ("B", "M") and len(raw) > 40:
+            inventor_segment(raw, lambda dec: (engine.learn(dec, ctx, True), dec)[1])
+            return
+        if raw[:2] == b"\xfe\xff":
+            for a, b, wide, ident in ole.string_properties(raw):
+                if ident:
+                    try:
+                        txt = raw[a:b].decode("utf-16-le" if wide else "latin-1").rstrip("\x00")
+                    except Exception:
+                        continue
+                    if txt.strip():
+                        engine._learn(txt, ctx, person=True)
+        engine.learn(raw, ctx, True)
+    out = ole.process(data, engine, ctx, sub, learn)
     # free sectors and slack can still hold old strings: one more pass over the raw file
     return engine.scrub(out, ctx, True, "")
 
@@ -579,7 +595,14 @@ def do_sw(path, data, engine, ctx):
         if raw[:5] == b"<?xml" or (name.endswith(".xml") or name.endswith(".rels")):
             return engine.scrub(raw, ctx, False, "xml")
         return engine.scrub(raw, ctx, True, "")
-    out = sw.process(data, engine, ctx, sub)
+    def learn(name, raw):
+        if name in ("PreviewPNG", "Preview") or name.startswith("Images/"):
+            return
+        if raw[:5] == b"<?xml" or name.endswith((".xml", ".rels")):
+            engine.learn(raw, ctx, False, "xml")
+        else:
+            engine.learn(raw, ctx, True)
+    out = sw.process(data, engine, ctx, sub, learn)
     if out is None:
         return engine.scrub(data, ctx, True, "")
     return out

@@ -53,6 +53,12 @@ WINPATH = re.compile(
     r'(?P<name>[^\\/:*?"<>|\r\n\t\x00]{1,48}?)[\\/]')
 NIXPATH = re.compile(r'(?:(?<![A-Za-z0-9._~%-])|^)/(?:Users|home)/(?P<name>[^\\/:*?"<>|\r\n\t\x00 ]{1,48}?)/')
 UNCHOST = re.compile(r'(?<![\\A-Za-z0-9:])\\\\(?P<host>[A-Za-z0-9][A-Za-z0-9_-]{2,40})\\[A-Za-z0-9$ _.-]{1,60}\\')
+XT_FIELD = re.compile(r"(?:^|[;\n\r])\s*(?P<k>USER|SITE|MC_ID)=(?P<v>[^;\r\n\x00]{1,60})")
+GIT_ACCOUNT = re.compile(r"(?i)\b(?:github|gitlab)\.com[/:](?P<u>[A-Za-z0-9][A-Za-z0-9-]{1,38})(?![A-Za-z0-9-])")
+GIT_RESERVED = set("""orgs features about pricing login join settings topics explore marketplace sponsors apps
+user users repos search site blog contact security enterprise collections trending issues pulls notifications
+git raw gist assets images downloads releases wiki""".split())
+SHORT83 = re.compile(r"^([A-Za-z0-9]{6})~\d")
 HOSTNAME = re.compile(r"(?i)\b(?:hostname|host name|computer ?name|machine ?name)\s*[:=]\s*['\"]?(?P<host>[A-Za-z0-9][A-Za-z0-9._-]{2,40})")
 CLOUDORG = re.compile(r'(?i)(?:OneDrive - (?P<a>[^\\/\r\n"<>|]{2,60}?)|Dropbox \((?P<b>[^)\\/\r\n]{2,60})\))(?=[\\/])')
 TLDS = set("""com org net edu gov mil int io co ac de uk fr jp cn it es nl ch at se no dk fi be pl cz ru br mx
@@ -89,6 +95,7 @@ class Ctx(object):
         self.scope = scope
         self.local_wide = set()   # lower-case atoms replaced file-wide
         self.local_exact = set()  # ordinary first names seen as account names: exact-case, file-wide
+        self.local_prefix = set()  # 8.3 short names (JSMITH~1): prefix of the real account name
         self.produced = set()     # pseudonyms already written (never replaced again)
         self.findings = []        # (kind, value)
         self.notes = []
@@ -282,6 +289,22 @@ class Engine(object):
             if host.lower() not in STOP and not is_word(host.lower()):
                 unit_spans.append(m.span("host"))
                 ctx.found("host", host)
+        for m in XT_FIELD.finditer(text):
+            v = m.group("v").strip()
+            if not v or v.lower() in ("huntsville, al", "unknown", "none") or m.group("k") == "SITE" and len(v) < 3:
+                continue
+            self._field(text, m.start("v"), m.end("v"), unit_spans, ctx,
+                        "xt-user" if m.group("k") == "USER" else "host" if m.group("k") == "MC_ID" else "xt-site")
+            if m.group("k") == "USER":
+                self._learn(v, ctx, person=True)
+        for m in GIT_ACCOUNT.finditer(text):
+            u = m.group("u")
+            low = u.lower()
+            if low in GIT_RESERVED or low in STOP or low in SOFTWARE or low in ctx.produced:
+                continue
+            unit_spans.append(m.span("u"))
+            ctx.found("account", u)
+            self._learn(u, ctx)
         for m in HOSTNAME.finditer(text):
             host = m.group("host")
             hat = [x.lower() for x in ATOM_RE.findall(host)]
@@ -364,6 +387,9 @@ class Engine(object):
         self._learn(value, ctx)
 
     def _learn(self, value, ctx, person=False):
+        m83 = SHORT83.match(value.strip())
+        if m83 and m83.group(1).lower() not in USER_STOP and m83.group(1).lower() not in ctx.produced:
+            ctx.local_prefix.add(m83.group(1).lower())
         for a in ATOM_RE.findall(value):
             low = a.lower()
             if low in USER_STOP or low in STOP or low in ctx.produced:
@@ -381,6 +407,11 @@ class Engine(object):
         if len(data) > CHUNK:
             return self._scrub_big(data, ctx, binary, kind)
         return self._scrub_one(data, ctx, binary, kind, detect=True)
+
+    def learn(self, data, ctx, binary=False, kind=""):
+        """Detection only: collect this buffer's identities into ``ctx`` (nothing is changed)."""
+        if data:
+            self._scrub_one(data[:8 * 1024 * 1024], ctx, binary, kind, detect=True, dry=True)
 
     def _scrub_big(self, data, ctx, binary, kind):
         # identity fields live in headers: detect on the first and last few MB, then
@@ -470,6 +501,25 @@ class Engine(object):
                     if s >= 2 and data[s - 1] == 0 and data[s - 2] in ALNUM:
                         continue
                     if e + 1 < len(data) and data[e + 1] == 0 and data[e] in ALNUM:
+                        continue
+                    self._local_atom(data, s, e, True, occupied, extra, in_field=False, ctx=ctx)
+        if ctx.local_prefix:
+            alt = "|".join(re.escape(x) for x in sorted(ctx.local_prefix))
+            rx = re.compile(("(?i)(?<![A-Za-z0-9])(?:%s)[A-Za-z0-9]{1,24}(?![A-Za-z0-9~])" % alt).encode("latin-1"))
+            for m in rx.finditer(data):
+                if binary and not _texty(data, m.start(), m.end(), 6):
+                    continue
+                if _in_filename(data, m.end()):
+                    continue
+                self._local_atom(data, m.start(), m.end(), False, occupied, extra, in_field=False, ctx=ctx)
+            if binary:
+                walt = "|".join("".join(re.escape(c) + "\\x00" for c in x) for x in sorted(ctx.local_prefix))
+                wrx = re.compile(("(?i)(?:%s)(?:[A-Za-z0-9]\\x00){1,24}" % walt).encode("latin-1"))
+                for m in wrx.finditer(data):
+                    s, e = m.start(), m.end()
+                    if s >= 2 and data[s - 1] == 0 and data[s - 2] in ALNUM:
+                        continue
+                    if e + 1 < len(data) and data[e + 1] == 0 and (data[e] in ALNUM or data[e] == 0x7E):
                         continue
                     self._local_atom(data, s, e, True, occupied, extra, in_field=False, ctx=ctx)
         if not plan and not extra:
@@ -577,7 +627,7 @@ class Engine(object):
 
 _IDLIKE = re.compile(r"^(?:id|no|nr|ref|#)?[\s_#.-]*\d{1,6}$")
 _ASCII_RUN = re.compile(rb"[\x20-\x7e]{6,}")
-_INTERESTING = re.compile(rb"[\\/@<]|[Hh]ost|[Nn]ame\s*[:=]")
+_INTERESTING = re.compile(rb"[\\/@<]|[Hh]ost|[Nn]ame\s*[:=]|USER=|SITE=|MC_ID=")
 _INTERESTING_W = re.compile(rb"[\\/@<]\x00|[Hh]\x00o\x00s\x00t\x00")
 _U16_RUN = re.compile(rb"(?:[\x20-\x7e]\x00){4,}")
 _ATOM_B = re.compile(rb"[A-Za-z0-9]+")
@@ -585,7 +635,8 @@ _ATOM_W = re.compile(rb"(?:[A-Za-z0-9]\x00)+")
 
 
 def _texty(data, s, e, need=12):
-    """True if the hit sits in a printable-ASCII run of at least ``need`` bytes."""
+    """True if the hit sits in a printable-ASCII run of at least ``need`` bytes, or in a
+    string that carries its own 32-bit length prefix (serialized property values)."""
     if e - s >= need:
         return True
     a = s
@@ -595,7 +646,18 @@ def _texty(data, s, e, need=12):
     n = len(data)
     while b < n and b - e < need and 32 <= data[b] < 127:
         b += 1
-    return b - a >= need
+    if b - a >= need:
+        return True
+    # exact extent of the printable run
+    while a > 0 and 32 <= data[a - 1] < 127:
+        a -= 1
+    while b < n and 32 <= data[b] < 127:
+        b += 1
+    if a >= 4 and b - a >= 3 and (b == n or data[b] == 0):
+        ln = data[a - 4] | (data[a - 3] << 8) | (data[a - 2] << 16) | (data[a - 1] << 24)
+        if ln in (b - a, b - a + 1):
+            return True
+    return False
 
 
 _HEXCH = frozenset(b"0123456789abcdefABCDEF\r\n")

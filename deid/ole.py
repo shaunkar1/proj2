@@ -178,13 +178,50 @@ def property_fields(stream):
                 yield q + 8, q + 8 + 2 * ln, True
 
 
-def process(data, engine, ctx, sub):
+def string_properties(stream):
+    """Yield (start, end, wide, is_identity) for every string property of a property-set stream."""
+    if len(stream) < 48 or stream[:2] != b"\xfe\xff":
+        return
+    nsets = struct.unpack_from("<I", stream, 24)[0]
+    for k in range(min(nsets, 4)):
+        base = 28 + k * 20
+        if base + 20 > len(stream):
+            break
+        fmtid = stream[base:base + 16]
+        off = struct.unpack_from("<I", stream, base + 16)[0]
+        ids = IDENTITY_PROPS.get(fmtid, ())
+        if off + 8 > len(stream):
+            continue
+        nprops = struct.unpack_from("<I", stream, off + 4)[0]
+        for j in range(min(nprops, 600)):
+            p = off + 8 + j * 8
+            if p + 8 > len(stream):
+                break
+            pid, poff = struct.unpack_from("<II", stream, p)
+            q = off + poff
+            if pid in (0, 1) or q + 8 > len(stream):
+                continue
+            vt, ln = struct.unpack_from("<II", stream, q)
+            vt &= 0xFFFF
+            if vt == 30 and 0 < ln <= 8192 and q + 8 + ln <= len(stream):
+                yield q + 8, q + 8 + ln, False, pid in ids
+            elif vt == 31 and 0 < ln <= 8192 and q + 8 + 2 * ln <= len(stream):
+                yield q + 8, q + 8 + 2 * ln, True, pid in ids
+
+
+def process(data, engine, ctx, sub, learn=None):
     """``sub(stream_name, bytes) -> bytes`` of the same length (or None)."""
     ole = Ole(data)
     changed = False
     items = list(ole.streams())
-    # property sets first so that names learnt there apply to the other streams
-    items.sort(key=lambda it: 0 if it[0].startswith("\x05") else 1)
+    if learn is not None:
+        # first pass: only collect identities, so a name found in one stream is
+        # replaced in every stream
+        for name, ext in items:
+            try:
+                learn(name, ole.read(ext))
+            except Exception:
+                pass
     for name, ext in items:
         raw = ole.read(ext)
         new = sub(name, raw)

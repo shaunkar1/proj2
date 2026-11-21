@@ -144,11 +144,18 @@ def zlb_stream(raw, scrub):
     return raw[:24] + z + raw[24 + cs:]
 
 
-def process(data, engine, ctx, sub):
+def process(data, engine, ctx, sub, learn=None):
     """De-identify a SolidWorks package in place.  ``sub(name, raw)`` -> new raw."""
     locs, cdir = parse(data)
     if not locs:
         return None
+    if learn is not None:
+        for rec in locs:
+            if rec["us"]:
+                try:
+                    learn(rec["name"], rec["raw"])
+                except Exception:
+                    pass
     out = bytearray(data)
     changed = 0
     # learn identities from the document-property streams first
