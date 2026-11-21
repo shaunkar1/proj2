@@ -91,8 +91,78 @@ def process(path, data, engine, ctx, depth=0):
     except Exception as exc:  # never lose a file because a parser choked on it
         ctx.notes.append("%s handler failed (%s: %s); generic pass used" % (ext or "file", type(exc).__name__, str(exc)[:80]))
     if is_text(data):
-        return engine.scrub(data, ctx, False, text_kind(ext, data))
+        out = engine.scrub(data, ctx, False, text_kind(ext, data))
+        if ext in (".igs", ".iges") or (len(out) > 80 and out[72:73] == b"S"):
+            try:
+                out = iges_fields(out, engine, ctx)
+            except Exception:
+                pass
+        return out
     return engine.scrub(data, ctx, True, "")
+
+
+def iges_fields(data, engine, ctx):
+    """Pseudonymise the author (21) and organisation (22) of an IGES global section."""
+    pos = 0
+    n = len(data)
+    chars = []   # file offsets of global-section characters (columns 1-72)
+    while pos < n and len(chars) < 20000:
+        nl = data.find(b"\n", pos)
+        end = n if nl < 0 else nl
+        line = data[pos:end]
+        if len(line) >= 73:
+            sec = line[72:73]
+            if sec == b"G":
+                chars.extend(range(pos, pos + 72))
+            elif sec in (b"D", b"P", b"T"):
+                break
+        pos = end + 1
+        if nl < 0:
+            break
+    if not chars:
+        return data
+    g = bytes(data[i] for i in chars).decode("latin-1")
+    # parameter and record delimiters (defaults , and ;)
+    i = 0
+    pd, rd = ",", ";"
+    if g[:2] == "1H":
+        pd = g[2]
+        i = 3 + 1 if g[3:4] == pd else 3
+    else:
+        i = 1 if g[:1] == "," else 0
+    fields = []   # (start, end) of Hollerith payloads, or None
+    idx = 1
+    j = i if g[:2] == "1H" else 0
+    # generic scan of parameters
+    k = 0
+    params = []
+    while k < len(g) and len(params) < 30:
+        m = re.match(r"\s*(\d+)H", g[k:])
+        if m:
+            ln = int(m.group(1))
+            start = k + m.end()
+            params.append((start, start + ln))
+            k = start + ln
+        else:
+            params.append(None)
+        nxt = k
+        while nxt < len(g) and g[nxt] not in (pd, rd):
+            nxt += 1
+        if nxt >= len(g) or g[nxt] == rd:
+            break
+        k = nxt + 1
+    out = bytearray(data)
+    changed = False
+    for want in (20, 21):   # zero-based: author, organisation
+        if want < len(params) and params[want]:
+            a, b = params[want]
+            value = g[a:b]
+            new = engine.scrub_field(value, ctx, "iges-author" if want == 20 else "iges-org")
+            if new != value and len(new) == len(value):
+                for off, ch in zip(chars[a:b], new.encode("latin-1")):
+                    out[off] = ch
+                changed = True
+    return bytes(out) if changed else data
 
 
 # ---------------------------------------------------------------- archives
@@ -116,6 +186,7 @@ def do_zip(path, data, engine, ctx, depth, composite=False):
     zin = zipfile.ZipFile(io.BytesIO(data))
     out = io.BytesIO()
     used = set()
+    touched = False
     with zipfile.ZipFile(out, "w", allowZip64=True) as zout:
         for zi in zin.infolist():
             name = zi.filename
@@ -127,9 +198,14 @@ def do_zip(path, data, engine, ctx, depth, composite=False):
             if zi.flag_bits & 0x1:
                 raise RuntimeError("encrypted zip member")
             payload = b"" if name.endswith("/") else zin.read(zi)
+            if new_name != name:
+                touched = True
             if payload:
                 sub = ctx if composite else Ctx(path + "/" + name, ctx.scope)
+                before = payload
                 payload = process(name, payload, engine, sub, depth + 1)
+                if payload != before:
+                    touched = True
                 if sub is not ctx:
                     ctx.findings.extend(sub.findings[:50])
                     ctx.notes.extend("%s: %s" % (new_name, n) for n in sub.notes[:20])
@@ -144,10 +220,15 @@ def do_zip(path, data, engine, ctx, depth, composite=False):
             ni.external_attr = zi.external_attr
             ni.create_system = zi.create_system
             ni.comment = engine.scrub(zi.comment, ctx, False, "") if zi.comment else b""
+            if ni.comment != zi.comment:
+                touched = True
             zout.writestr(ni, payload)
         if zin.comment:
             zout.comment = engine.scrub(zin.comment, ctx, False, "")
-    return out.getvalue()
+            if zout.comment != zin.comment:
+                touched = True
+    # nothing identifying inside: keep the archive byte-for-byte
+    return out.getvalue() if touched else data
 
 
 def do_gzip(path, data, engine, ctx, depth):
@@ -162,6 +243,8 @@ def do_gzip(path, data, engine, ctx, depth):
     new = process(inner_name, raw, engine, ctx, depth + 1)
     out = io.BytesIO()
     fname = engine.rename(inner_name, ctx) if flags & 0x08 else ""
+    if new == raw and (not fname or fname == inner_name or fname.encode("latin-1", "replace") in data[:400]):
+        return data
     with gzip.GzipFile(filename=fname, mode="wb", fileobj=out, mtime=mtime, compresslevel=6) as g:
         g.write(new)
     return out.getvalue()
@@ -171,29 +254,34 @@ def do_tar(path, data, engine, ctx, depth):
     tin = tarfile.open(fileobj=io.BytesIO(data), mode="r:")
     out = io.BytesIO()
     fmt = tin.format if tin.format in (tarfile.USTAR_FORMAT, tarfile.GNU_FORMAT, tarfile.PAX_FORMAT) else tarfile.GNU_FORMAT
+    touched = False
     with tarfile.open(fileobj=out, mode="w", format=fmt) as tout:
         for ti in tin:
             payload = None
             if ti.isreg():
-                payload = tin.extractfile(ti).read()
+                before = tin.extractfile(ti).read()
                 sub = Ctx(path + "/" + ti.name, ctx.scope)
-                payload = process(ti.name, payload, engine, sub, depth + 1)
+                payload = process(ti.name, before, engine, sub, depth + 1)
+                touched = touched or payload != before
                 ctx.findings.extend(sub.findings[:50])
                 ctx.hits += sub.hits
-            ti.name = rename_path(engine, ctx, ti.name)
+            new_name = rename_path(engine, ctx, ti.name)
+            touched = touched or new_name != ti.name
+            ti.name = new_name
             if ti.linkname:
                 ti.linkname = rename_path(engine, ctx, ti.linkname)
             for attr in ("uname", "gname"):
                 v = getattr(ti, attr)
-                if v and v.lower() not in STOP and v.lower() not in ("root", "wheel", "staff", "users", "nogroup", "nobody"):
+                if v and v.lower() not in STOP and v.lower() not in ("root", "wheel", "staff", "users", "nogroup", "nobody", "runner", "docker"):
                     setattr(ti, attr, pseudo.text(v))
+                    touched = True
             ti.pax_headers = {}
             if payload is not None:
                 ti.size = len(payload)
                 tout.addfile(ti, io.BytesIO(payload))
             else:
                 tout.addfile(ti)
-    return out.getvalue()
+    return out.getvalue() if touched else data
 
 
 def lzw_decode(data):
@@ -271,6 +359,7 @@ def do_7z(path, data, engine, ctx, depth):
         with py7zr.SevenZipFile(src, "r") as z:
             z.extractall(dst)
         outp = os.path.join(tmp, "out.7z")
+        touched = False
         with py7zr.SevenZipFile(outp, "w") as z:
             for root, dirs, files in os.walk(dst):
                 dirs.sort()
@@ -280,10 +369,15 @@ def do_7z(path, data, engine, ctx, depth):
                     with open(full, "rb") as f:
                         payload = f.read()
                     sub = Ctx(path + "/" + rel, ctx.scope)
+                    before = payload
                     payload = process(rel, payload, engine, sub, depth + 1)
                     ctx.findings.extend(sub.findings[:50])
                     ctx.hits += sub.hits
-                    z.writestr(payload, rename_path(engine, ctx, rel))
+                    new_rel = rename_path(engine, ctx, rel)
+                    touched = touched or payload != before or new_rel != rel
+                    z.writestr(payload, new_rel)
+        if not touched:
+            return data
         with open(outp, "rb") as f:
             return f.read()
     finally:

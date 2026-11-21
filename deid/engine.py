@@ -318,7 +318,7 @@ class Engine(object):
     def _field(self, text, a, b, unit_spans, ctx, kind):
         value = text[a:b]
         low = value.strip().lower()
-        if low in FIELD_STOP or not any(c.isalnum() for c in low):
+        if low in FIELD_STOP or not any(c.isalnum() for c in low) or _IDLIKE.match(low):
             return
         atoms = [x.lower() for x in ATOM_RE.findall(value)]
         if not any(x not in STOP for x in atoms) or any(x in SOFTWARE for x in atoms):
@@ -525,6 +525,7 @@ class Engine(object):
         return "".join(out)
 
 
+_IDLIKE = re.compile(r"^(?:id|no|nr|ref|#)?[\s_#.-]*\d{1,6}$")
 _ASCII_RUN = re.compile(rb"[\x20-\x7e]{6,}")
 _INTERESTING = re.compile(rb"[\\/@<]")
 _INTERESTING_W = re.compile(rb"[\\/@<]\x00")

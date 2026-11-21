@@ -2,7 +2,8 @@
 # Machina De-ID: run one attempt end to end on this machine (streaming, resumable).
 #   bash code/run.sh <attempt-number> [extra args for "deid.cli run"]
 # Needs: state/dest.txt  (gs://builders-machina-submissions-1120/teams/<team-id>/)
-#        state/token.txt (1-hour upload token; replace the file content to renew)
+#        state/token.txt (1-hour upload token).  While this script runs it also watches the
+#        clipboard: copying the track page's "upload commands" renews the token file.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$HERE")"
@@ -27,8 +28,31 @@ DEST_BASE="$(tr -d ' \r\n' < state/dest.txt 2>/dev/null)"
 if [ -z "$DEST_BASE" ]; then echo "state/dest.txt is missing (gs://.../teams/<team-id>/)" | tee -a "$LOG"; exit 1; fi
 DEST="${DEST_BASE%/}/attempt-$ATTEMPT/"
 if command -v caffeinate >/dev/null 2>&1; then caffeinate -dims -w $$ & fi
+
+# token watcher: pick up a fresh token whenever the upload commands are copied
+if command -v pbpaste >/dev/null 2>&1; then
+  (
+    while kill -0 $$ 2>/dev/null; do
+      c="$(pbpaste 2>/dev/null | sed -n "s/.*MACHINA_UPLOAD_TOKEN=['\"]\{0,1\}\([^'\" ]*\).*/\1/p" | head -1)"
+      if [ "${#c}" -gt 200 ] && [ "$c" != "$(cat state/token.txt 2>/dev/null)" ]; then
+        printf '%s' "$c" > state/token.txt
+        echo "[token] new upload token taken from the clipboard at $(date +%H:%M:%S)" >> "$LOG"
+      fi
+      sleep 5
+    done
+  ) &
+fi
+
 cd code || exit 1
 export PYTHONUNBUFFERED=1
+if [ ! -f "../state/go-$ATTEMPT" ]; then
+  echo "=== trial: 120 files, saved locally only" | tee -a "../$LOG"
+  ../.venv/bin/python -m deid.cli run --attempt "trial-$ATTEMPT" --state ../state --dry "../state/dryout-$ATTEMPT" \
+      --sample 120 2>&1 | tee -a "../$LOG"
+  echo "=== trial done $(date +%H:%M:%S); waiting for state/go-$ATTEMPT (continues by itself after 20 min)" | tee -a "../$LOG"
+  for i in $(seq 1 240); do [ -f "../state/go-$ATTEMPT" ] && break; sleep 5; done
+fi
+echo "=== full run -> $DEST $(date +%H:%M:%S)" | tee -a "../$LOG"
 ../.venv/bin/python -m deid.cli run --attempt "$ATTEMPT" --state ../state --dest "$DEST" \
     --token-file ../state/token.txt "$@" 2>&1 | tee -a "../$LOG"
 ../.venv/bin/python -m deid.cli finish --attempt "$ATTEMPT" --state ../state --dest "$DEST" \

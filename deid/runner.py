@@ -191,6 +191,43 @@ def _upload(key, data):
     raise RuntimeError("upload failed (%s)" % last)
 
 
+def _copy(src_key, dst_key):
+    """Server-side copy inside the bucket (no bytes travel).  Returns True on success."""
+    cfg = _W["cfg"]
+    enc = lambda k: "/".join(urllib.parse.quote(p, safe="") for p in k.split("/"))
+    for attempt in range(4):
+        tok = _token()
+        try:
+            if _W["out"] is None:
+                _W["out"] = http.client.HTTPSConnection(GCS_HOST, timeout=300)
+            conn = _W["out"]
+            conn.request("PUT", "/%s/%s" % (cfg["bucket"], enc(dst_key)), body=b"", headers={
+                "Authorization": "Bearer " + tok, "Content-Length": "0", "User-Agent": UA,
+                "x-goog-copy-source": "/%s/%s" % (cfg["bucket"], enc(src_key))})
+            r = conn.getresponse()
+            body = r.read()
+            if 200 <= r.status < 300:
+                return True
+            if _expired(r.status, body):
+                for _ in range(2160):
+                    time.sleep(5)
+                    if _token() != tok:
+                        break
+                continue
+            if r.status < 500 and r.status != 429:
+                return False
+        except Exception:
+            pass
+        try:
+            if _W["out"] is not None:
+                _W["out"].close()
+        except Exception:
+            pass
+        _W["out"] = None
+        time.sleep(1.5 ** attempt)
+    return False
+
+
 class _Timeout(Exception):
     pass
 
@@ -201,9 +238,20 @@ def _alarm(signum, frame):
 
 def _task(row):
     path, size, md5, urlpath = row[:4]
-    safe = len(row) > 4 and row[4]
+    safe = len(row) > 4 and row[4] is True
+    prev = row[4] if len(row) > 4 and isinstance(row[4], dict) else None
     t0 = time.time()
     rec = {"path": path, "in": size}
+    if prev and not _W["cfg"].get("dry"):
+        cfg = _W["cfg"]
+        try:
+            if _copy(cfg["prev_prefix"] + "corpus/" + prev["out_path"], cfg["prefix"] + "corpus/" + prev["out_path"]):
+                rec.update(ok=True, copied=True, out_path=prev["out_path"], out=prev.get("out", 0), md5=prev.get("md5"),
+                           changed=prev.get("changed"), hits=0, notes=prev.get("notes", []), findings=prev.get("findings", []),
+                           t=[0, 0, round(time.time() - t0, 2)])
+                return rec
+        except Exception:
+            pass
     try:
         engine = _W["engine"]
         data = _download(urlpath, size) if size else b""
@@ -274,12 +322,40 @@ def run(args):
                 if rec.get("ok"):
                     done.add(rec["path"])
     todo = [r for r in rows if r[0] not in done]
+    # incremental attempt: files whose handler did not change are copied inside the
+    # bucket from the previous attempt instead of being downloaded and processed again
+    prev_prefix = ""
+    if getattr(args, "reuse_from", "") and not args.dry:
+        only = set(x.strip().lower() for x in (args.only_ext or "").split(",") if x.strip())
+        pdir = os.path.join(state, "attempt-%s" % args.reuse_from, "done.jsonl")
+        prevrec = {}
+        if os.path.exists(pdir):
+            with open(pdir) as f:
+                for line in f:
+                    try:
+                        rec = json.loads(line)
+                    except Exception:
+                        continue
+                    if rec.get("ok") and rec.get("out_path"):
+                        prevrec[rec["path"]] = rec
+        ncopy = 0
+        new_todo = []
+        for r in todo:
+            pr = prevrec.get(r[0])
+            if pr is not None and handlers.ext_of(r[0]) not in only and not (args.only_prefix and r[0].startswith(args.only_prefix)):
+                slim = {k: pr.get(k) for k in ("out_path", "out", "md5", "changed", "notes", "findings")}
+                new_todo.append(r + (slim,))
+                ncopy += 1
+            else:
+                new_todo.append(r)
+        todo = new_todo
+        print("incremental: %d files copied from attempt-%s, %d re-processed" % (ncopy, args.reuse_from, len(todo) - ncopy), flush=True)
     if args.sample:
         step = max(1, len(todo) // args.sample)
         todo = todo[::step][:args.sample]
     elif args.limit:
         todo = todo[:args.limit]
-    total_bytes = sum(r[1] for r in todo)
+    total_bytes = sum(r[1] for r in todo if not (len(r) > 4 and isinstance(r[4], dict)))
     print("%d files to do (%.1f GB), %d already done" % (len(todo), total_bytes / 1e9, len(done)), flush=True)
     if not todo:
         return 0
@@ -292,11 +368,14 @@ def run(args):
         bucket, _, prefix = dest[5:].partition("/")
         if not prefix.endswith("/"):
             prefix += "/"
+    if getattr(args, "reuse_from", "") and prefix:
+        prev_prefix = prefix.rstrip("/").rsplit("/", 1)[0] + "/attempt-%s/" % args.reuse_from
     cfg = {"key": key.hex(), "dict": dict_path, "token_file": args.token_file,
            "in_host": urllib.parse.urlparse(args.base).netloc, "bucket": bucket, "prefix": prefix,
-           "dry": args.dry}
-    small = [r for r in todo if r[1] < BIG]
-    big = [r for r in todo if r[1] >= BIG]
+           "prev_prefix": prev_prefix, "dry": args.dry}
+    is_copy = lambda r: len(r) > 4 and isinstance(r[4], dict)
+    small = [r for r in todo if r[1] < BIG or is_copy(r)]
+    big = [r for r in todo if r[1] >= BIG and not is_copy(r)]
     # mix sizes so progress is steady and memory use is even
     random.Random(7).shuffle(small)
     ctxm = multiprocessing.get_context("spawn")
@@ -308,7 +387,8 @@ def run(args):
         with lock:
             donef.write(json.dumps(rec) + "\n")
             stats["n"] += 1
-            stats["bytes"] += rec.get("in", 0)
+            stats["bytes"] += 0 if rec.get("copied") else rec.get("in", 0)
+            stats["copied"] = stats.get("copied", 0) + (1 if rec.get("copied") else 0)
             if rec.get("ok"):
                 stats["out"] += rec.get("out", 0)
                 stats["changed"] += 1 if rec.get("changed") else 0
@@ -362,7 +442,7 @@ def run(args):
             for safe in (False, True):
                 ex = ProcessPoolExecutor(1, mp_context=ctxm, initializer=_init, initargs=(cfg,))
                 try:
-                    record(ex.submit(_task, row + (safe,)).result())
+                    record(ex.submit(_task, row[:4] + (safe,)).result())
                     break
                 except BrokenProcessPool:
                     if safe:
@@ -383,7 +463,7 @@ def run(args):
                 msg = {"done": stats["n"], "total": len(todo), "gb": round(stats["bytes"] / 1e9, 2),
                        "gb_total": round(total_bytes / 1e9, 2), "mb_s": round(rate / 1e6, 1),
                        "eta_min": round(eta / 60), "errors": stats["err"], "changed": stats["changed"],
-                       "hits": stats["hits"], "time": time.strftime("%H:%M:%S")}
+                       "hits": stats["hits"], "copied": stats.get("copied", 0), "time": time.strftime("%H:%M:%S")}
                 donef.flush()
             print("progress " + json.dumps(msg), flush=True)
             try:
