@@ -342,6 +342,7 @@ class Dictionary(object):
         self.scoped_phrases = {}  # scope -> list of atom lists (project names made of ordinary words)
         self.auto = {}           # scope -> words only that collection's documents use (document text only)
         self.logos = set()       # digests of embedded pictures that are logos (blanked in PDFs)
+        self.extra_code_phrases = {}
 
     # -- construction -------------------------------------------------
     def add_name(self, name, scope=None, force_scoped=False):
@@ -437,6 +438,10 @@ class Dictionary(object):
             if keep:
                 self.codes[scope] = keep
         # multi-part numbers ("2020-048-10", "TA00-07-01-0009", "SHRPRO-V1 1110.01")
+        for scope, lits in getattr(self, "extra_code_phrases", {}).items():
+            for lit in lits:
+                pper.setdefault(scope, set()).add(lit)
+                pspread.setdefault(lit, set()).add(scope)
         self.code_phrases = {}
         for scope, lits in pper.items():
             keep = sorted(l for l in lits if len(pspread[l]) <= max_spread)
@@ -571,6 +576,8 @@ class Dictionary(object):
                 if a not in STOP and len(a) >= 3:
                     self.scoped.setdefault(scope, set()).add(a)
         self.logos.update(obj.get("logos", []))                 # digests of logo / stamp pictures in PDFs
+        for scope, lits in obj.get("code_phrases", {}).items():  # numbers read from labelled title-block fields
+            self.extra_code_phrases.setdefault(scope, set()).update(l.lower() for l in lits)
         for scope, atoms in obj.get("auto", {}).items():        # collection-specific document words
             self.auto.setdefault(scope, set()).update(a.lower() for a in atoms)
         for scope, phrases in obj.get("scoped_phrases", {}).items():

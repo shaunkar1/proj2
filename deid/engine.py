@@ -482,7 +482,7 @@ class Engine(object):
                     i += 1
                 piece = t[i:i + len(a)]
                 if code:      # revision letters and plain version / size parts stay
-                    keep = len(a) == 1 or (len(a) == 2 and a.isdigit()) or (not a.isdigit() and (CODE_GENERIC.match(a) or is_word(a)))
+                    keep = len(a) <= 2 or (not a.isdigit() and (CODE_GENERIC.match(a) or is_word(a)))
                 else:
                     keep = a in STOP
                 out.append(piece if keep else self.token(piece))
