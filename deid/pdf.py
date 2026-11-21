@@ -368,6 +368,9 @@ def _helv(pdf, holder):
     return holder["font"]
 
 
+_NEEDED_OPS = frozenset(("q", "Q", "cm", "BT", "Tf", "Tm", "Td", "TD", "T*", "Tj", "TJ", "'", '"'))
+
+
 def _strings_of(raw):
     out = [m.group(1) for m in LITERAL.finditer(raw)]
     for m in HEXSTR.finditer(raw):
@@ -421,7 +424,19 @@ def _content_stream(target, raw, engine, ctx, resources=None, pdf=None, fcache=N
         ops = pikepdf.parse_content_stream(stream)
     except Exception:
         return None
-    ops = [(list(operands), operator) for operands, operator in ops]
+    # only the operators that place or show text are unpacked; everything else (the
+    # drawing's line work) is carried through untouched
+    lazy = []
+    for ins in ops:
+        try:
+            opr = ins.operator
+            if str(opr) in _NEEDED_OPS:
+                lazy.append((list(ins.operands), opr))
+            else:
+                lazy.append((None, ins))
+        except Exception:
+            lazy.append((None, ins))
+    ops = lazy
     default = _Font()
     ident = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
 
@@ -446,6 +461,8 @@ def _content_stream(target, raw, engine, ctx, resources=None, pdf=None, fcache=N
     last = None       # (start position, advance or None, size, nchars) of the previous text op
     moved = True      # a positioning operator ran since the previous text op
     for oi, (operands, operator) in enumerate(ops):
+        if operands is None:
+            continue
         op = str(operator)
         if op == "q":
             stack.append((ctm, cur))
@@ -587,6 +604,9 @@ def _content_stream(target, raw, engine, ctx, resources=None, pdf=None, fcache=N
     cur = None
     stack = []
     for oi, (operands, operator) in enumerate(ops):
+        if operands is None:
+            out_ops.append(operator)
+            continue
         op = str(operator)
         if op == "q":
             stack.append(cur)
