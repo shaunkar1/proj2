@@ -695,10 +695,61 @@ def _content_stream(target, raw, engine, ctx, resources=None, pdf=None, fcache=N
     return pikepdf.unparse_content_stream(out_ops)
 
 
+def image_key(obj):
+    """Identity of an embedded picture: digest of its stored bytes."""
+    import hashlib
+    return hashlib.md5(obj.read_raw_bytes()).hexdigest()[:12]
+
+
+def _blank_image(obj, value):
+    """Fill a picture with one grey level (255 = white / opaque, 0 = black / transparent)."""
+    import zlib
+    w = int(obj.get("/Width", 0))
+    h = int(obj.get("/Height", 0))
+    if w <= 0 or h <= 0 or w * h > 40000000:
+        return False
+    for k in ("/Decode", "/DecodeParms", "/Mask", "/Intent", "/Interpolate", "/Alternates", "/Metadata", "/OC", "/Matte"):
+        if k in obj:
+            del obj[k]
+    if bool(obj.get("/ImageMask", False)):
+        # a stencil: all bits set = nothing painted
+        obj.write(zlib.compress(b"\xff" * (((w + 7) // 8) * h)), filter=pikepdf.Name("/FlateDecode"))
+        obj["/BitsPerComponent"] = 1
+    else:
+        obj.write(zlib.compress(bytes([value]) * (w * h)), filter=pikepdf.Name("/FlateDecode"))
+        obj["/ColorSpace"] = pikepdf.Name("/DeviceGray")
+        obj["/BitsPerComponent"] = 8
+    return True
+
+
+def _blank_logo(obj, logos, ctx):
+    """Replace a known logo / stamp picture by an empty one of the same size: the picture
+    becomes white and, when it has a soft mask, fully transparent."""
+    try:
+        if image_key(obj) not in logos:
+            return False
+        w = int(obj.get("/Width", 0))
+        h = int(obj.get("/Height", 0))
+        sm = obj.get("/SMask")
+        if not _blank_image(obj, 255):
+            return False
+        if isinstance(sm, pikepdf.Stream):
+            try:
+                _blank_image(sm, 0)
+            except Exception:
+                pass
+        ctx.hits += 1
+        ctx.found("pdf-logo", "%dx%d" % (w, h))
+        return True
+    except Exception:
+        return False
+
+
 def _process(pdf, path, engine, ctx, depth):
     from . import handlers
     changed = False
     done = set()
+    logos = getattr(engine.D, "logos", None)
     # 1. document information dictionary (first: names found here apply to the pages)
     try:
         info = pdf.trailer.get("/Info")
@@ -764,6 +815,9 @@ def _process(pdf, path, engine, ctx, depth):
                     ctx.findings.extend(sub_ctx.findings[:50])
                     if new != raw:
                         obj.write(new)
+                        changed = True
+                elif sub == "/Image":
+                    if logos and _blank_logo(obj, logos, ctx):
                         changed = True
                 elif getattr(obj, "objgen", None) in content_ids:
                     pass

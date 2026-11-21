@@ -334,6 +334,7 @@ class Dictionary(object):
         self.scoped = {}         # scope -> set(lower-case atoms)
         self.scoped_phrases = {}  # scope -> list of atom lists (project names made of ordinary words)
         self.auto = {}           # scope -> words only that collection's documents use (document text only)
+        self.logos = set()       # digests of embedded pictures that are logos (blanked in PDFs)
 
     # -- construction -------------------------------------------------
     def add_name(self, name, scope=None, force_scoped=False):
@@ -509,6 +510,7 @@ class Dictionary(object):
                 a = a.lower()
                 if a not in STOP and len(a) >= 3:
                     self.scoped.setdefault(scope, set()).add(a)
+        self.logos.update(obj.get("logos", []))                 # digests of logo / stamp pictures in PDFs
         for scope, atoms in obj.get("auto", {}).items():        # collection-specific document words
             self.auto.setdefault(scope, set()).update(a.lower() for a in atoms)
         for scope, phrases in obj.get("scoped_phrases", {}).items():
@@ -527,7 +529,7 @@ class Dictionary(object):
                 "scoped": {k: sorted(v) for k, v in self.scoped.items()},
                 "scoped_phrases": self.scoped_phrases, "codes": getattr(self, "codes", {}),
                 "auto": {k: sorted(v) for k, v in getattr(self, "auto", {}).items()},
-                "code_phrases": getattr(self, "code_phrases", {}),
+                "code_phrases": getattr(self, "code_phrases", {}), "logos": sorted(getattr(self, "logos", ())),
                 "bounded": getattr(self, "bounded", [])}
 
     @classmethod
@@ -540,6 +542,7 @@ class Dictionary(object):
         d.codes = dict(obj.get("codes", {}))
         d.auto = {k: set(v) for k, v in obj.get("auto", {}).items()}
         d.code_phrases = dict(obj.get("code_phrases", {}))
+        d.logos = set(obj.get("logos", []))
         d.bounded = list(obj.get("bounded", []))
         return d
 
