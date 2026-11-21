@@ -203,6 +203,7 @@ esta este esto estos estas cara con sin para por del las los una uno sol mar nom
 detalle escala dibujado revisado aprobado firma titulo cantidad denominacion proyecto conjunto
 avec sans pour dans sur sous les une vue coupe echelle nom dessin ensemble
 per sezione scala nome data disegno assieme particolare
+definiert angegeben bemasst anders sonst falls
 """.split())
 
 
