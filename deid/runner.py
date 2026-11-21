@@ -71,6 +71,10 @@ def build_dictionary(rows, state_dir):
         d.add_codes(paths)
     if os.environ.get("DEID_LINKS", "1") != "0":
         d.link_duplicates(rows, text_only=os.environ.get("DEID_LINKS") == "text")
+    if os.environ.get("DEID_SCOPE_WORDS") == "1":
+        # every word of a source folder's own name counts as a name inside that source's
+        # documents (document text and properties only), ordinary words included
+        d.add_scope_words(paths)
     d.mark_word_parts()
     return d
 

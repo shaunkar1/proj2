@@ -197,6 +197,10 @@ def strong_atom(low):
     return True
 
 
+_SCOPE_WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
+_SCOPE_STOP = frozenset("and the for with from that this into over under".split())
+
+
 def scope_of(path):
     """Group a corpus path into the repository / collection it belongs to."""
     p = path.split("/")
@@ -447,6 +451,36 @@ class Dictionary(object):
             keep = sorted(l for l in lits if len(pspread[l]) <= max_spread)
             if keep:
                 self.code_phrases[scope] = keep
+
+    def add_scope_words(self, paths):
+        seen = set()
+        n = 0
+        for path in paths:
+            c = path.split("/")
+            if c[0] == "sources" and len(c) > 3:
+                comp = c[2]
+            elif c[0] == "archives" and len(c) > 1:
+                comp = os.path.splitext(c[1])[0]
+            else:
+                continue
+            scope = scope_of(path)
+            if (scope, comp) in seen:
+                continue
+            seen.add((scope, comp))
+            words = set()
+            for part in re.split(r"[^A-Za-z0-9]+", comp):
+                if not part:
+                    continue
+                words.add(part.lower())
+                for a in _SCOPE_WORD.findall(part):
+                    words.add(a.lower())
+            words = set(w for w in words
+                        if not w.isdigit() and not HEX12.match(w) and w not in _SCOPE_STOP
+                        and (len(w) >= 4 or (len(w) == 3 and not is_word(w))))
+            if words:
+                self.auto.setdefault(scope, set()).update(words)
+                n += len(words)
+        return n
 
     def link_duplicates(self, rows, min_shared=3, text_only=False):
         """Collections that hold copies of the same files (a curated set next to the
