@@ -90,6 +90,10 @@ def _init(cfg):
     pseudo.set_key(bytes.fromhex(cfg["key"]))
     with open(cfg["dict"]) as f:
         _W["engine"] = Engine(Dictionary.from_json(json.load(f)))
+    _W["names"] = None
+    if cfg.get("names"):
+        with open(cfg["names"]) as f:
+            _W["names"] = json.load(f)
     _W["in"] = None
     _W["out"] = None
     _W["token"] = ("", 0.0)
@@ -344,7 +348,7 @@ def _task(row):
         finally:
             if hasattr(signal, "SIGALRM"):
                 signal.alarm(0)
-        new_path = handlers.rename_path(engine, ctx, path)
+        new_path = (_W.get("names") or {}).get(path) or handlers.rename_path(engine, ctx, path)
         # self-check: distinctive names found in this file that are still readable in the
         # raw output (plain or UTF-16).  Logged privately to steer later improvements.
         residual = []
@@ -455,6 +459,25 @@ def run(args):
     cfg = {"key": key.hex(), "dict": dict_path, "token_file": args.token_file,
            "in_host": urllib.parse.urlparse(args.base).netloc, "bucket": bucket, "prefix": prefix,
            "prev_prefix": prev_prefix, "dry": args.dry, "input_cache": getattr(args, "input_cache", "")}
+    # --names-from N: files produced now keep the output names they had in attempt N, so they
+    # can be combined with the other files of that attempt
+    if getattr(args, "names_from", ""):
+        names = {}
+        npath = os.path.join(state, "attempt-%s" % args.names_from, "done.jsonl")
+        with open(npath) as f:
+            for line in f:
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                if rec.get("ok") and rec.get("out_path"):
+                    names[rec["path"]] = rec["out_path"]
+        want = set(r[0] for r in todo if not (len(r) > 4 and isinstance(r[4], dict)))
+        names = {k: v for k, v in names.items() if k in want}
+        cfg["names"] = os.path.join(adir, "names.json")
+        with open(cfg["names"], "w") as f:
+            json.dump(names, f)
+        print("names of %d files taken from attempt-%s" % (len(names), args.names_from), flush=True)
     is_copy = lambda r: len(r) > 4 and isinstance(r[4], dict)
     copies = [r for r in todo if is_copy(r)] if not args.dry else []
     small = [r for r in todo if r[1] < BIG and not (copies and is_copy(r))]

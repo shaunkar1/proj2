@@ -39,6 +39,7 @@ def main(argv=None):
     r.add_argument("--reuse-from", default="", help="previous attempt number: copy unchanged outputs inside the bucket")
     r.add_argument("--only-ext", default="", help="with --reuse-from: extensions to re-process, e.g. .pdf,.zip")
     r.add_argument("--only-prefix", default="", help="with --reuse-from: also re-process paths with this prefix")
+    r.add_argument("--names-from", default="", help="attempt number whose output names are kept for the files produced now")
 
     f = sub.add_parser("finish", help="write README.txt, upload code/ and README.txt")
     common(f)

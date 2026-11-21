@@ -8,6 +8,7 @@ keeps fixed-width / length-prefixed / offset-based formats valid.
 """
 import hashlib
 import hmac
+import os
 import re
 from functools import lru_cache
 
@@ -19,6 +20,10 @@ from functools import lru_cache
 # sans-serif metrics a/b/e/p are 556 wide (capitals 667) and c/k/s/v/x/y/z are 500, so
 # lower-case text keeps its exact length.
 LOWER_GROUPS = ("i", "jl", "ftr", "abep", "cksvxyz", "dghnoqu", "mw")
+if os.environ.get("DEID_WIDTHS") == "v18":
+    # the grouping used by earlier attempts: lets new documents be combined with the
+    # files of such an attempt (same name -> same pseudonym)
+    LOWER_GROUPS = ("i", "jl", "ftr", "abcekpsvxyz", "dghnoqu", "mw")
 _GROUP = {}
 for _g in LOWER_GROUPS:
     for _c in _g:
