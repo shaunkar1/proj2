@@ -10,6 +10,7 @@ are replaced by deterministic pseudonyms (see ``deid.pseudo``).
 Both ASCII/UTF-8 and UTF-16LE occurrences are handled.  In binary buffers a short
 ASCII hit is only accepted inside a printable run, so numeric geometry is never touched.
 """
+import os
 import re
 
 from . import pseudo
@@ -166,6 +167,7 @@ class Ctx(object):
         self.findings = []        # (kind, value)
         self._seen = set()
         self.numbers_ok = False   # all-digit part numbers may be replaced (names, drawing text)
+        self.in_name = False      # a file / folder name is being rewritten
         self.digit_spans = []     # phone numbers / postcodes found in the text being scrubbed
         self.notes = []
         self.hits = 0
@@ -241,6 +243,17 @@ class Engine(object):
             kind = "D" if a.isdigit() else "K"
             add(a, _Entry(kind, None, True, frozenset(scopes), False))
             add(_u16(a), _Entry(kind, None, True, frozenset(scopes), True))
+        # words that only the documents of one collection use (see Dictionary.auto):
+        # replaced in document text, never in file names or native files
+        autos = {}
+        for scope, atoms in getattr(dictionary, "auto", {}).items():
+            for a in atoms:
+                autos.setdefault(a, set()).add(scope)
+        for a, scopes in autos.items():
+            if a in dictionary.strong or a in scoped or a in codes:
+                continue
+            add(a, _Entry("A", None, True, frozenset(scopes), False))
+        self.code_mode = os.environ.get("DEID_CODES", "1")
         self._pats = pats
         # distinctive names that are also matched inside longer words: a longer word that
         # is replaced as a whole keeps the same pseudonym for that part (see token())
@@ -334,6 +347,11 @@ class Engine(object):
         n = len(data)
         if entry.scopes is not None and ctx.scope not in entry.scopes:
             return False
+        if entry.kind == "A":
+            if entry.wide or not ctx.numbers_ok or ctx.in_name:
+                return False
+        elif entry.kind in ("K", "D") and self.code_mode == "text" and (ctx.in_name or not ctx.numbers_ok):
+            return False      # experiment: numbers replaced in document text only
         if entry.kind == "D":
             # an all-digit part number: only in names, drawing text and references to
             # files - never in free numeric data
@@ -888,10 +906,12 @@ class Engine(object):
         """Apply corpus-wide identities only (file and folder names, archive members)."""
         raw = value.encode("utf-8")
         keep, ctx.numbers_ok = ctx.numbers_ok, True
+        keep_name, ctx.in_name = ctx.in_name, True
         try:
             plan = self._global_plan(raw, ctx, False)
         finally:
             ctx.numbers_ok = keep
+            ctx.in_name = keep_name
         if not plan:
             return value
         out = bytearray(raw)

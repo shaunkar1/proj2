@@ -269,6 +269,7 @@ class Dictionary(object):
         self.phrases = {}        # canonical lower-case phrase -> list of atoms
         self.scoped = {}         # scope -> set(lower-case atoms)
         self.scoped_phrases = {}  # scope -> list of atom lists (project names made of ordinary words)
+        self.auto = {}           # scope -> words only that collection's documents use (document text only)
 
     # -- construction -------------------------------------------------
     def add_name(self, name, scope=None, force_scoped=False):
@@ -431,6 +432,8 @@ class Dictionary(object):
                 a = a.lower()
                 if a not in STOP and len(a) >= 3:
                     self.scoped.setdefault(scope, set()).add(a)
+        for scope, atoms in obj.get("auto", {}).items():        # collection-specific document words
+            self.auto.setdefault(scope, set()).update(a.lower() for a in atoms)
         for scope, phrases in obj.get("scoped_phrases", {}).items():
             for ph in phrases:
                 lows = [x.lower() for x in ATOM_RE.findall(ph if isinstance(ph, str) else " ".join(ph))]
@@ -446,6 +449,7 @@ class Dictionary(object):
         return {"strong": sorted(self.strong), "phrases": self.phrases,
                 "scoped": {k: sorted(v) for k, v in self.scoped.items()},
                 "scoped_phrases": self.scoped_phrases, "codes": getattr(self, "codes", {}),
+                "auto": {k: sorted(v) for k, v in getattr(self, "auto", {}).items()},
                 "bounded": getattr(self, "bounded", [])}
 
     @classmethod
@@ -456,6 +460,7 @@ class Dictionary(object):
         d.scoped = {k: set(v) for k, v in obj.get("scoped", {}).items()}
         d.scoped_phrases = dict(obj.get("scoped_phrases", {}))
         d.codes = dict(obj.get("codes", {}))
+        d.auto = {k: set(v) for k, v in obj.get("auto", {}).items()}
         d.bounded = list(obj.get("bounded", []))
         return d
 
