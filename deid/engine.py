@@ -13,7 +13,7 @@ ASCII hit is only accepted inside a printable run, so numeric geometry is never 
 import re
 
 from . import pseudo
-from .identities import SOFTWARE, STOP, VENDOR_DOMAINS, is_first_name, is_surname, is_word, strong_atom
+from .identities import SOFTWARE, STOP, VENDOR_DOMAINS, is_first_name, is_foreign_word, is_surname, is_word, strong_atom
 
 try:  # optional accelerator; a pure-Python trie regex is used when it is missing
     import ahocorasick
@@ -133,7 +133,8 @@ PROSE_ADDR = re.compile("(?<![A-Za-z0-9])(?P<city>(?:%s[ \t]+){0,2}%s),[ \t]+(?P
 LEGAL_SUFFIX = re.compile(r"(?:Inc|Incorporated|LLC|L\.L\.C|Ltd|Limited|GmbH|AG|KG|Corp|Corporation|S\.A|SA|S\.L|SL|S\.r\.l|Srl|SRL|"
                           r"B\.V|BV|N\.V|NV|Pty|PLC|plc|A/S|AB|Oy|Kft|s\.r\.o|Sdn Bhd|Pvt|LLP|e\.V)$")
 DETERMINERS = set("their its his her our your the this that these those every each any all some no their's respective".split())
-PROSE_STOP = set("""key allen phillips hex torx socket wrench driver respective owners holders with without
+PROSE_STOP = set("""tolerancing interpret geometric protocol drawing drawings university technology challenges
+key allen phillips hex torx socket wrench driver respective owners holders with without
 drawing drawn title scale sheet size date name rev revision material finish weight tolerance tolerances
 dimensions dimension unless otherwise specified third angle projection do not scale part number qty quantity item description
 assembly section detail view top bottom front back left right side general notes note approved checked designed engineer
@@ -195,8 +196,9 @@ class Engine(object):
         def add(key, entry):
             pats.setdefault(key, []).append(entry)
 
+        word_parts = set(getattr(dictionary, "bounded", ()))
         for a in dictionary.strong:
-            bounded = not (len(a) >= 6 or (len(a) >= 5 and any(c.isdigit() for c in a) and any(c.isalpha() for c in a)))
+            bounded = a in word_parts or not (len(a) >= 6 or (len(a) >= 5 and any(c.isdigit() for c in a) and any(c.isalpha() for c in a)))
             add(a, _Entry("S", None, bounded, None, False))
             add(_u16(a), _Entry("S", None, bounded, None, True))
         for _, atoms in dictionary.phrases.items():
@@ -216,7 +218,8 @@ class Engine(object):
             for a in atoms:
                 scoped.setdefault(a, set()).add(scope)
         inner = [a for a in dictionary.strong
-                 if len(a) >= 6 or (len(a) >= 5 and any(c.isdigit() for c in a) and any(c.isalpha() for c in a))]
+                 if a not in word_parts and
+                 (len(a) >= 6 or (len(a) >= 5 and any(c.isdigit() for c in a) and any(c.isalpha() for c in a)))]
         for a, scopes in scoped.items():
             if a in dictionary.strong:
                 continue
@@ -242,7 +245,8 @@ class Engine(object):
         # distinctive names that are also matched inside longer words: a longer word that
         # is replaced as a whole keeps the same pseudonym for that part (see token())
         self._inner = sorted((a for a in dictionary.strong
-                              if len(a) >= 6 or (len(a) >= 5 and any(c.isdigit() for c in a) and any(c.isalpha() for c in a))),
+                              if a not in word_parts and
+                              (len(a) >= 6 or (len(a) >= 5 and any(c.isdigit() for c in a) and any(c.isalpha() for c in a)))),
                              key=len, reverse=True)
         self._inner_set = set(self._inner)
         self._inner_auto = None
@@ -355,6 +359,15 @@ class Engine(object):
                 return False
             if e < n and data[e] in ALNUM:
                 return False
+        elif entry.kind == "S" and ((s > 0 and data[s - 1] in ALNUM) or (e < n and data[e] in ALNUM)):
+            a, b = s, e
+            while a > 0 and s - a < 24 and data[a - 1] in ALNUM:
+                a -= 1
+            while b < n and b - e < 24 and data[b] in ALNUM:
+                b += 1
+            tok = data[a:b].decode("latin-1").lower()
+            if tok.isalpha() and (is_word(tok) or is_foreign_word(tok)):
+                return False      # part of an ordinary word
         if _blobby(data, s, e):
             return False  # inside base64 / hex encoded data
         if binary and e - s < 10 and not _texty(data, s, e):

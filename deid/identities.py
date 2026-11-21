@@ -320,6 +320,12 @@ class Dictionary(object):
             if repo:
                 self.add_repo_name(repo, scope)
 
+    def mark_word_parts(self):
+        """Names that also occur *inside* ordinary words ("drawin" in "drawing") are only
+        replaced as whole words."""
+        blob = "\n".join(words())
+        self.bounded = sorted(a for a in self.strong if len(a) >= 5 and a.isalpha() and a in blob)
+
     def add_codes(self, paths, max_spread=6):
         """Part / drawing numbers used in the file names of each collection."""
         per = {}
@@ -434,7 +440,8 @@ class Dictionary(object):
     def to_json(self):
         return {"strong": sorted(self.strong), "phrases": self.phrases,
                 "scoped": {k: sorted(v) for k, v in self.scoped.items()},
-                "scoped_phrases": self.scoped_phrases, "codes": getattr(self, "codes", {})}
+                "scoped_phrases": self.scoped_phrases, "codes": getattr(self, "codes", {}),
+                "bounded": getattr(self, "bounded", [])}
 
     @classmethod
     def from_json(cls, obj):
@@ -444,6 +451,7 @@ class Dictionary(object):
         d.scoped = {k: set(v) for k, v in obj.get("scoped", {}).items()}
         d.scoped_phrases = dict(obj.get("scoped_phrases", {}))
         d.codes = dict(obj.get("codes", {}))
+        d.bounded = list(obj.get("bounded", []))
         return d
 
     def save(self, path):

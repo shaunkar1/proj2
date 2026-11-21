@@ -128,7 +128,7 @@ def promote(state):
     system names as often as owners); placeholders, part numbers and values that are
     themselves pseudonyms are skipped."""
     from . import pseudo
-    from .identities import SOFTWARE, STOP, VENDOR_DOMAINS, is_first_name, is_word, scope_of
+    from .identities import SOFTWARE, STOP, VENDOR_DOMAINS, is_first_name, is_foreign_word, is_word, scope_of
     kinds = ("user", "host", "email", "step-author", "pdf-author", "ole-property", "xml-field",
              "dxf-savedby", "iges-author", "png-author", "ps-for", "account", "pdf-person", "pdf-org", "pdf-url")
     person_kinds = ("user", "email", "step-author", "pdf-author", "ole-property", "iges-author", "xml-field", "pdf-person")
@@ -175,9 +175,9 @@ def promote(state):
                     continue
                 if strong_atom(low) and len(low) >= 5:
                     strong[low] += 1
-                    if kind in prose_kinds:
+                    if kind in ("pdf-person", "pdf-url"):
                         prose_files[low].add(rec["path"])
-                    else:
+                    elif kind not in prose_kinds:
                         firm.add(low)
                 elif kind in person_kinds and kind not in prose_kinds and len(low) >= 4 and is_first_name(low):
                     scoped[scope].add(low)
@@ -198,7 +198,7 @@ def promote(state):
                     if a in strong and len(spread[a]) < 3:
                         spread[a].add(sc)
     keep = sorted(a for a in strong if a not in made and len(spread[a]) < 3 and not _WIDGET.search(a)
-                  and (a in firm or len(prose_files[a]) >= 2))
+                  and (a in firm or (len(prose_files[a]) >= 2 and not is_foreign_word(a))))
     def solid(ph):
         # every word a name or a non-word: two files are enough; otherwise three
         return all(is_first_name(x) or not is_word(x) for x in ph.split())
