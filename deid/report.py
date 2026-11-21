@@ -150,9 +150,26 @@ def promote(state):
             if rec.get("ok") and rec.get("findings"):
                 recs.append(rec)
     phrase_files = collections.defaultdict(set)
+    # names and numbers read from the text of a collection's documents: replaced in the text
+    # of all its documents (never in file names), so every sheet of a drawing set agrees
+    doc_words = collections.defaultdict(set)
     for rec in recs:
         scope = scope_of(rec["path"])
         for kind, value in rec.get("findings", []):
+            if kind == "pdf-number":
+                for a in ATOM_RE.findall(value):
+                    low = a.lower()
+                    if len(low) >= 3 and (low.isdigit() or any(c.isdigit() for c in low)) and not _PLACEHOLDER.match(low):
+                        doc_words[scope].add(low)
+                    elif 3 <= len(low) <= 8 and low.isalpha() and not is_word(low) and not is_foreign_word(low) and low not in STOP:
+                        doc_words[scope].add(low)
+                continue
+            if kind == "pdf-person":
+                for a in ATOM_RE.findall(value):
+                    low = a.lower()
+                    if (len(low) >= 4 and low.isalpha() and low not in STOP and low not in SOFTWARE
+                            and not is_word(low) and not is_foreign_word(low)):
+                        doc_words[scope].add(low)
             if kind not in kinds:
                 continue
             if kind == "pdf-person":
@@ -204,7 +221,8 @@ def promote(state):
         return all(is_first_name(x) or not is_word(x) for x in ph.split())
     phrases = sorted(ph for ph, files in phrase_files.items()
                      if len(files) >= (2 if solid(ph) else 3))
-    out = {"strong": keep, "scoped": {k: sorted(v) for k, v in scoped.items()}, "phrases": phrases}
+    out = {"strong": keep, "scoped": {k: sorted(v) for k, v in scoped.items()}, "phrases": phrases,
+           "auto": {k: sorted(v) for k, v in doc_words.items() if v}}
     with open(os.path.join(state, "discovered.json"), "w") as f:
         json.dump(out, f)
     return len(out["strong"]) + sum(len(v) for v in out["scoped"].values()) + len(phrases)
