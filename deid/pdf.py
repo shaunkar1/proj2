@@ -112,6 +112,33 @@ def _strip_text(pdf):
     return done
 
 
+_BT_ET = re.compile(rb"(?s)(?<![A-Za-z0-9_/])BT(?![A-Za-z0-9_]).*?(?<![A-Za-z0-9_/])ET(?![A-Za-z0-9_])")
+
+
+def _strip_text_fast(pdf):
+    """Experiment only: cut every text object (BT ... ET) out of the page and form streams
+    without parsing them."""
+    done = False
+    for obj in pdf.objects:
+        try:
+            if not isinstance(obj, pikepdf.Stream):
+                continue
+            typ = str(obj.get("/Type", ""))
+            sub = str(obj.get("/Subtype", ""))
+            if sub in ("/Image", "/XML") or typ in ("/Metadata", "/XRef", "/ObjStm", "/EmbeddedFile") or "/Length1" in obj or "/FunctionType" in obj:
+                continue
+            data = obj.read_bytes()
+            if b"BT" not in data:
+                continue
+            new = _BT_ET.sub(b" ", data)
+            if new != data:
+                obj.write(new)
+                done = True
+        except Exception:
+            pass
+    return done
+
+
 def _all_properties(pdf, engine, keep=()):
     """Every document property becomes a pseudonym (word by word); the XMP copies are dropped.
     Returns True when something changed."""
@@ -185,8 +212,10 @@ def _process_file(path, data, engine, ctx, depth):
             # experiment only: nothing readable is left in the document - no page text, no
             # pictures, every document property a pseudonym (measures what the remaining
             # findings depend on)
-            _strip_text(pdf)
-            _nuke(pdf, engine)
+            _strip_text_fast(pdf)
+            _all_properties(pdf, engine)
+            if os.environ.get("DEID_PDF_NUKE_IMAGES") == "1":
+                _nuke(pdf, engine)
             changed = True
         if not changed:
             # nothing in the live document; still clean plain-text leftovers (old
