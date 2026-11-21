@@ -52,6 +52,8 @@ if [ ! -f "../state/go-$ATTEMPT" ]; then
       --sample 120 2>&1 | tee -a "../$LOG"
   echo "=== trial done $(date +%H:%M:%S); waiting for state/go-$ATTEMPT (continues by itself after 20 min)" | tee -a "../$LOG"
   for i in $(seq 1 240); do [ -f "../state/go-$ATTEMPT" ] && break; sleep 5; done
+  # state/hold-N keeps the run paused after the trial until state/go-N appears
+  while [ -f "../state/hold-$ATTEMPT" ] && [ ! -f "../state/go-$ATTEMPT" ]; do sleep 5; done
 fi
 echo "=== full run -> $DEST $(date +%H:%M:%S)" | tee -a "../$LOG"
 ../.venv/bin/python -m deid.cli run --attempt "$ATTEMPT" --state ../state --dest "$DEST" \
