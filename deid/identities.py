@@ -105,6 +105,25 @@ wto-tools crane-x7 parol6 keychron antmicro sciurus17 rt-net rtnet
 southampton stuttgart ljubljana aachen delft aarhus kanpur hamburg
 mcmaster-carr mcmaster edmund-optics misumi-ec banggood adafruit sparkfun pololu
 aligo awi bam unh throwbot liotech powercube6 loong qingloong openloong janelia irnas
+drexel cicirello regli guilherme bourjault locher ammar bilalmubdir mubdir sbrooks1 sbrooks2 rumainum
+himalia13 himalia okika varsay wingxine changjiang purdue uiuc wsc2019 worldskills2019 skillsaustria
+asimov asv1 popi popiv10 popiv9 nerell koruza sciurus17 stararm stararm102 xlerobot openarm pennypress
+longmill olsk memsduino partcad cmpe2150 meb1302 twpatron emorph raptar cryoelec frosti k2tirf cytkit
+openwater ampel360 triboslider hardgate crnhzmw tonegawa bosem topmass mycami2 kagnex honpine wuji huruy
+ashiko trika maidigongjuji61 eduscol cnpm usli atom01 roboto rebot sienci willwinder qing lince
+icub1 icub2 icub3 ecub ecub1 heriot-watt heriot
+""".split()
+
+# Suppliers and brands of bought-in parts.  Off by default (their part names are
+# engineering content); enabled with DEID_VENDORS=1 to treat them as company identities.
+VENDORS = """
+wuerth wurth phoenixcontact molex amphenol samtec hirose vishay murata kemet belfuse fastron chilisin
+sunlord coilcraft traco recom neosid standexmeder stocko wago schrack altech kubler nidec maxon moog igus
+hiwin mitutoyo legris haas kuka emika banebots makerbeam openbuilds bluco rexnord torrington inafag balseal
+koolance aavid tattu dremel ikea lego bentley gilson megatech carlstahl connecttech kingtek powerintegrations
+batteryspace daratech dynamixel robotis feetech hitec futaba waveshare bondtech bambu bambulab phaetus voron
+actuonix optotune qioptiq conoptics scanlab fisba photometrics gocator vicon omron panasonic cubemars
+myactuator robstride damiao encos steadywin leaderdrive zltech hebi shapeoko jobin-yvon wollensak
 """.split()
 
 CURATED_PHRASES = [
@@ -240,7 +259,10 @@ class Dictionary(object):
             self.scoped_phrases.setdefault(scope, []).append(lows)
 
     def add_curated(self):
-        for tok in CURATED_STRONG:
+        toks = list(CURATED_STRONG)
+        if os.environ.get("DEID_VENDORS") == "1":
+            toks += VENDORS
+        for tok in toks:
             lows = [a.lower() for a in ATOM_RE.findall(tok)]
             if len(lows) == 1:
                 if len(lows[0]) >= 3:
