@@ -9,6 +9,7 @@ that Author / Last saved by / Company / Manager and Inventor's Designer / Engine
 Authority / Checked by / Approved by / Vendor fields are replaced with pseudonyms even
 when the value is an ordinary word.
 """
+import re
 import struct
 
 MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
@@ -193,6 +194,47 @@ def property_fields(stream):
                 yield q + 8, q + 8 + 2 * ln, True
 
 
+_ID_NAME = re.compile(r"(?i)author|designer|designed ?by|drawn|draft(?:er|sman)|checked|approved|engineer|creator|created ?by|"
+                      r"modified ?by|saved ?by|owner|manager|company|organi[sz]ation|customer|client|vendor|supplier|manufacturer|"
+                      r"contact|e-?mail|phone|address|responsible|reviewer|operator|user ?name|dessinateur|zeichner|"
+                      r"gezeichnet|gepr|bearbeiter|ersteller|firma|autor|dibujado|dise\xf1ador|empresa|cliente")
+
+
+def _named_identity_pids(stream, off, nprops):
+    """Property ids of a user-defined set whose *name* says they hold an identity
+    (Author, DrawnBy, Company ...).  The names live in the dictionary property (id 0)."""
+    out = set()
+    try:
+        cp = 1252
+        dpos = None
+        for j in range(min(nprops, 600)):
+            p = off + 8 + j * 8
+            pid, poff = struct.unpack_from("<II", stream, p)
+            if pid == 1:
+                cp = struct.unpack_from("<H", stream, off + poff + 4)[0]
+            elif pid == 0:
+                dpos = off + poff
+        if dpos is None:
+            return out
+        n = struct.unpack_from("<I", stream, dpos)[0]
+        q = dpos + 4
+        for _ in range(min(n, 400)):
+            pid, ln = struct.unpack_from("<II", stream, q)
+            q += 8
+            if cp == 1200:
+                name = stream[q:q + 2 * ln].decode("utf-16-le", "replace")
+                q += 2 * ln
+                q += (-(q - dpos)) % 4
+            else:
+                name = stream[q:q + ln].decode("latin-1", "replace")
+                q += ln
+            if _ID_NAME.search(name.strip("\x00")):
+                out.add(pid)
+    except Exception:
+        pass
+    return out
+
+
 def string_properties(stream):
     """Yield (start, end, wide, is_identity) for every string property of a property-set stream."""
     if len(stream) < 48 or stream[:2] != b"\xfe\xff":
@@ -208,6 +250,7 @@ def string_properties(stream):
         if off + 8 > len(stream):
             continue
         nprops = struct.unpack_from("<I", stream, off + 4)[0]
+        named = _named_identity_pids(stream, off, nprops)
         for j in range(min(nprops, 600)):
             p = off + 8 + j * 8
             if p + 8 > len(stream):
@@ -219,9 +262,9 @@ def string_properties(stream):
             vt, ln = struct.unpack_from("<II", stream, q)
             vt &= 0xFFFF
             if vt == 30 and 0 < ln <= 8192 and q + 8 + ln <= len(stream):
-                yield q + 8, q + 8 + ln, False, pid in ids
+                yield q + 8, q + 8 + ln, False, pid in ids or pid in named
             elif vt == 31 and 0 < ln <= 8192 and q + 8 + 2 * ln <= len(stream):
-                yield q + 8, q + 8 + 2 * ln, True, pid in ids
+                yield q + 8, q + 8 + 2 * ln, True, pid in ids or pid in named
 
 
 def process(data, engine, ctx, sub, learn=None):

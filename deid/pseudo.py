@@ -50,7 +50,11 @@ def _atom(low):
         r = rnd[2 * i] * 256 + rnd[2 * i + 1]
         g = _GROUP.get(ch)
         if g:
-            out.append(g[r % len(g)])
+            if len(g) > 1:
+                # always a different letter of the same width group
+                out.append(g[(g.index(ch) + 1 + r % (len(g) - 1)) % len(g)])
+            else:
+                out.append(ch)
         elif "0" <= ch <= "9":
             out.append("0123456789"[r % 10])
         else:
