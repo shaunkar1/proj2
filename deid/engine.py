@@ -197,7 +197,13 @@ bill materials open source hardware license creative commons attribution share a
 data sheet datasheet user manual guide instructions introduction overview features specifications technical performance
 electrical mechanical characteristics absolute maximum ratings pin configuration functional typical application
 high low max min nom ref typ thru hole holes dia diameter radius depth length width height thickness
-united states america china germany france italy spain japan canada kingdom""".split())
+united states america china germany france italy spain japan canada kingdom alle aller allen des der die das den dem ein eine einer bei mit von vor nach aus auf ohne oder und nicht wenn nur bis alt neu
+hinweis benennung werkstoff datum blatt zeichnung gezeichnet bearbeitet norm massstab ansicht schnitt
+esta este esto estos estas cara con sin para por del las los una uno sol mar nombre fecha tipo modelo parte pieza plano vista corte
+detalle escala dibujado revisado aprobado firma titulo cantidad denominacion proyecto conjunto
+avec sans pour dans sur sous les une vue coupe echelle nom dessin ensemble
+per sezione scala nome data disegno assieme particolare
+""".split())
 
 
 class Ctx(object):
@@ -634,6 +640,9 @@ class Engine(object):
             if is_first_name(low):
                 return "F"
             if not is_word(low):
+                # an ordinary word of another language is not a name ("Abmessungen", "dibujado")
+                if is_foreign_word(_fold(low)) and not is_surname(low):
+                    return "W"
                 return "N"
             if is_surname(low):
                 return "L"
@@ -683,8 +692,12 @@ class Engine(object):
             cl = [cls(x) for x in lasts]
             if len(first) < 3 or len(lasts[0]) < 3 or not (first + lasts[0]).isascii() and sum(ch.isascii() for ch in first + lasts[0]) < 4:
                 continue
-            if retry[0] and (c1 != "F" or is_word(first.lower()) or is_foreign_word(first.lower())):
-                continue          # a second look only for an unmistakable given name
+            if retry[0] and c1 != "S":
+                # a second look (after a rejected overlapping candidate) only for a clear
+                # "Given Family" pair in normal case
+                if not (c1 == "F" and not (first.isupper() and lasts[0].isupper())
+                        and (cl[0] in ("N", "F") or (cl[0] == "L" and not is_word(lasts[0].lower())))):
+                    continue
             if c1 == "S" or cl[0] == "S":
                 # "Drawn John Smith": try again without the leading generic word
                 if c1 == "S" and len(lasts) == 2 and cl[0] == "F" and cl[1] in ("N", "F", "L"):
@@ -1112,6 +1125,13 @@ _ATOM_W = re.compile(rb"(?:[A-Za-z0-9]\x00)+")
 _FILEREF = re.compile(rb"^(?:[A-Za-z0-9_\-.()+&'#~\[\]]| (?! )){0,48}?\.(?:sldprt|sldasm|slddrw|ipt|iam|idw|ipn|step|stp|stl|pdf|dwg|dxf|"
                       rb"igs|iges|x_t|x_b|sat|par|asm|psm|dft|prt|drw|catpart|catproduct|catdrawing|f3d|fcstd|3mf|obj|easm|eprt|"
                       rb"edrw|png|jpg|jpeg|zip)(?![A-Za-z0-9])", re.I)
+
+
+def _fold(low):
+    if low.isascii():
+        return low
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFKD", low) if not unicodedata.combining(c))
 
 
 _SEG = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
