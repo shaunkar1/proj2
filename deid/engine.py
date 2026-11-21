@@ -640,9 +640,6 @@ class Engine(object):
             if is_first_name(low):
                 return "F"
             if not is_word(low):
-                # an ordinary word of another language is not a name ("Abmessungen", "dibujado")
-                if is_foreign_word(_fold(low)) and not is_surname(low):
-                    return "W"
                 return "N"
             if is_surname(low):
                 return "L"
