@@ -392,10 +392,44 @@ def do_rar(path, data, engine, ctx, depth):
 
 
 # ---------------------------------------------------------------- native CAD
+INVENTOR_EXT = (".ipt", ".iam", ".idw", ".ipn", ".ide")
+_ZHEAD = re.compile(rb"\x78[\x01\x5e\x9c\xda]")
+
+
+def inventor_segment(raw, scrub):
+    """Inventor keeps each model segment as a short header followed by one zlib stream
+    running to the end of the OLE stream.  De-identify the unpacked bytes and re-pack to
+    exactly the same compressed size (the OLE stream size cannot change in place)."""
+    for m in _ZHEAD.finditer(raw[:400]):
+        off = m.start()
+        try:
+            dobj = zlib.decompressobj()
+            dec = dobj.decompress(raw[off:])
+        except Exception:
+            continue
+        if dobj.unused_data or not dobj.eof or len(dec) < 16:
+            continue
+        new = scrub(dec)
+        if new == dec or len(new) != len(dec):
+            return raw
+        z = sw.zlib_to_size(new, len(raw) - off)
+        if z is None:
+            return None
+        return raw[:off] + z
+    return raw
+
+
 def do_ole(path, data, engine, ctx):
-    zlb_done = []
+    inventor = ext_of(path) in INVENTOR_EXT
 
     def sub(name, raw):
+        if inventor and len(name) > 20 and name[:1] in ("B", "M") and len(raw) > 40:
+            new = inventor_segment(raw, lambda dec: engine.scrub(dec, ctx, True, ""))
+            if new is None:
+                ctx.notes.append("Inventor segment could not be re-packed in place")
+                return raw
+            if new is not raw:
+                return new
         if name.endswith("__ZLB") and raw[:8] == sw.ZLB_SIG:
             # pre-2015 SolidWorks: zlib-packed stream, rewritten at its original size
             def inner(dec):
