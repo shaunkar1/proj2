@@ -57,6 +57,33 @@ def _raw_pass(data, engine, ctx):
     return new if out is None else bytes(out)
 
 
+_OWN_GENERIC = set("""drawing drawings draw drw dwg sheet sheets page pages rev revision version ver final copy
+new old draft assembly assy asm part parts model models view views detail details section sections plan plans layout
+print export output scan scanned document doc docs file files pdf step stp iges template title block bom list table
+left right front back rear side upper lower inner outer main base with without from for and the with inch metric
+mm cm test sample example manual guide instructions datasheet spec specification specifications schematic schematics
+zeichnung blatt ansicht teil baugruppe plano hoja dibujo conjunto pieza dessin feuille ensemble piece vue""".split())
+
+
+def _own_title_words(path, ctx):
+    """Experiment: the words of a document's own file name (its part / drawing title) are
+    treated as identifying and replaced wherever the document repeats them."""
+    stem = path.rsplit("/", 1)[-1]
+    stem = stem[:stem.rfind(".")] if "." in stem else stem
+    for tok in re.findall("[A-Za-z0-9]+", stem):
+        low = tok.lower()
+        if low in _OWN_GENERIC or low in ctx.produced:
+            continue
+        if low.isalpha():
+            if len(low) >= 4:
+                ctx.local_wide.add(low)
+        elif low.isdigit():
+            if len(low) >= 5:
+                ctx.local_wide.add(low)
+        elif len(low) >= 4:
+            ctx.local_wide.add(low)
+
+
 def _strip_text(pdf):
     done = False
     streams = []
@@ -94,6 +121,8 @@ def _process_file(path, data, engine, ctx, depth):
         ctx.notes.append("PDF could not be parsed (%s); raw pass only" % type(exc).__name__)
         return _raw_pass(data, engine, ctx)
     try:
+        if os.environ.get("DEID_PDF_OWN") == "1":
+            _own_title_words(path, ctx)
         ctx.numbers_ok = True         # drawing text and document properties
         try:
             changed = _process(pdf, path, engine, ctx, depth)
