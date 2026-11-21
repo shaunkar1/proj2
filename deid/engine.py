@@ -453,19 +453,24 @@ class Engine(object):
                 return "L"
             return "W"
 
+        # words of the file's own name are left to the corpus-wide rules, so a drawing's
+        # title stays in step with the names of the model files it belongs to
+        own = getattr(ctx, "_own", None)
+        if own is None:
+            own = ctx._own = set(x.lower() for x in ATOM_RE.findall(ctx.path.rsplit("/", 1)[-1]))
+
         def span(a, b, kind, person=False, only=None):
             value = text[a:b]
             atoms = [x.lower() for x in ATOM_RE.findall(value)]
-            if not atoms or all(x in ctx.produced or x in STOP or x in PROSE_STOP for x in atoms):
+            if not atoms or all(x in ctx.produced or x in STOP or x in PROSE_STOP or x in own for x in atoms):
                 return
-            if only is None:
-                unit_spans.append((a, b))
-            else:
-                for mm in re.finditer("[A-Za-z0-9\xc0-\xff]+", value):
-                    if only(mm.group(0)):
-                        unit_spans.append((a + mm.start(), a + mm.end()))
+            for mm in re.finditer("[A-Za-z0-9\xc0-\xff]+", value):
+                tok = mm.group(0)
+                if tok.lower() in own or (only is not None and not only(tok)):
+                    continue
+                unit_spans.append((a + mm.start(), a + mm.end()))
             ctx.found(kind, value)
-            self._learn(value, ctx, person=person)
+            self._learn(" ".join(x for x in ATOM_RE.findall(value) if x.lower() not in own), ctx, person=person)
 
         for m in PROSE_PERSON.finditer(text):
             first, last = m.group("first"), m.group("last")

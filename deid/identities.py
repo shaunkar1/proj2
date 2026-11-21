@@ -341,6 +341,15 @@ class Dictionary(object):
                 a = a.lower()
                 if a not in STOP and len(a) >= 4:
                     self.scoped.setdefault(scope, set()).add(a)
+        for scope, phrases in obj.get("scoped_phrases", {}).items():
+            for ph in phrases:
+                lows = [x.lower() for x in ATOM_RE.findall(ph if isinstance(ph, str) else " ".join(ph))]
+                if len(lows) >= 2 and lows not in self.scoped_phrases.get(scope, []):
+                    self.scoped_phrases.setdefault(scope, []).append(lows)
+        for ph in obj.get("phrases", []):
+            lows = [x.lower() for x in ATOM_RE.findall(ph)]
+            if len(lows) >= 2:
+                self.phrases["-".join(lows)] = lows
 
     # -- persistence (private mapping; never uploaded) ----------------
     def to_json(self):
