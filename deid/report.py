@@ -146,11 +146,17 @@ def promote(state):
         for rec in _records(adir):
             if rec.get("ok") and rec.get("findings"):
                 recs.append(rec)
+    phrase_files = collections.defaultdict(set)
     for rec in recs:
         scope = scope_of(rec["path"])
         for kind, value in rec.get("findings", []):
             if kind not in kinds:
                 continue
+            if kind in ("pdf-person", "pdf-org"):
+                # full names seen in running text: replaced as a phrase wherever they recur
+                toks = ATOM_RE.findall(value)
+                if 2 <= len(toks) <= 4 and all(t.isalpha() and len(t) >= 2 for t in toks) and value.isascii():
+                    phrase_files[" ".join(t.lower() for t in toks)].add(rec["path"])
             if kind == "email" and "@" in value:
                 value = value.split("@", 1)[0]          # the mailbox, not the provider
             if "~" in value:
@@ -187,7 +193,9 @@ def promote(state):
                         spread[a].add(sc)
     keep = sorted(a for a in strong if a not in made and len(spread[a]) < 3 and not _WIDGET.search(a)
                   and (a in firm or len(prose_files[a]) >= 2))
-    out = {"strong": keep, "scoped": {k: sorted(v) for k, v in scoped.items()}}
+    phrases = sorted(ph for ph, files in phrase_files.items()
+                     if len(files) >= 2 and not all(x in STOP for x in ph.split()))
+    out = {"strong": keep, "scoped": {k: sorted(v) for k, v in scoped.items()}, "phrases": phrases}
     with open(os.path.join(state, "discovered.json"), "w") as f:
         json.dump(out, f)
-    return len(out["strong"]) + sum(len(v) for v in out["scoped"].values())
+    return len(out["strong"]) + sum(len(v) for v in out["scoped"].values()) + len(phrases)
