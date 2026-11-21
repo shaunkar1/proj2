@@ -112,12 +112,12 @@ PROSE_ORG_PREFIX = re.compile(
     "(?<![A-Za-z0-9\xc0-\xff])(?P<pre>(?:Technical |Technische |State |National |Royal )?(?:University|Universit\xe4t|Universit\xe9|Universidad|Universit\xe0|Universidade|"
     "Universiteit|Institute|Institut|Instituto|Istituto|College|School|Academy|Politecnico|Polit\xe9cnica|Hochschule|Fachhochschule|"
     "Fundaci\xf3|Fundaci\xf3n|Fondazione|Laboratory|Department|Dept\\.?|Faculty|Centre|Center)(?: of| de| di| del| della| f\xfcr| for| d')?(?: the| la| les)?)"
-    "[ \t]+(?P<name>(?:%s|[%s]{2,})(?:[ \t]+(?:%s|[%s]{2,}|of|de|di|and|at)){0,3})" % (_CAPW, _UP, _CAPW, _UP), re.I)
+    "(?:[ \t]+|[ \t]*\n[ \t]*)(?P<name>(?:%s|[%s]{2,})(?:[ \t]+(?:%s|[%s]{2,}|of|de|di|and|at)){0,3})" % (_CAPW, _UP, _CAPW, _UP), re.I)
 PROSE_COPYRIGHT = re.compile(
     "(?:\xa9|\\(c\\)|\\bCopyright\\b|\\bCOPYRIGHT\\b)[ \t]*(?:\xa9|\\(c\\))?[ \t]*(?:\\d{4}(?:[ \t]*[-,][ \t]*\\d{2,4})*)?[ \t]*,?[ \t]*(?:by[ \t]+)?"
     "(?P<name>(?:%s|[%s0-9]{2,}|&)(?:[ \t.,]+(?:%s|[%s0-9]{2,}|&|and|of|de)){0,4})" % (_CAPW, _UP, _CAPW, _UP))
 PROSE_PROPERTY = re.compile(
-    "(?i)\\b(?:sole )?property of[ \t\r\n]+(?:the[ \t\r\n]+)?(?P<name>[^<>.;:\r\n]{3,60}?)[ \t]*(?=[.;,\r\n]|[ \t]+(?:any|and its|is|it|without|reproduction)\\b)")
+    "(?i)\\b(?:sole )?property of[ \t\r\n]+(?:the[ \t\r\n]+)?(?P<name>[^<>.;:\r\n]{3,60}?(?:\n[^<>.;:\r\n]{2,40}?)?)[ \t]*(?=[.;,]|\n\n|$|[ \t\n]+(?:any|and its|is|it|without|reproduction)\\b)")
 PROSE_LABEL = re.compile(
     "(?i)(?<![A-Za-z\xc0-\xff])(?:drawn|drawn by|designed|designed by|design by|checked|checked by|approved|approved by|appr\\.?|"
     "author|authors|engineer|created by|made by|prepared by|modified by|reviewed by|released by|drafter|draftsman|designer|"
