@@ -450,9 +450,15 @@ class Dictionary(object):
         rows (path, size, md5, ...); two collections are linked when at least
         ``min_shared`` files have identical content."""
         by = {}
+        docs = set()
         for r in rows:
             if len(r) > 2 and r[2] and r[1] > 2000:
                 by.setdefault(r[2], set()).add(scope_of(r[0]))
+                if r[0].lower().endswith(".pdf"):
+                    docs.add(r[2])
+        # a document with identical copies in other collections is rewritten with the names
+        # of all of them, so every copy comes out with the same text
+        self.dup_scopes = {m: sorted(by[m]) for m in docs if 1 < len(by[m]) <= 12}
         pairs = {}
         for scs in by.values():
             if 1 < len(scs) <= 8:
@@ -583,6 +589,7 @@ class Dictionary(object):
                 "scoped_phrases": self.scoped_phrases, "codes": getattr(self, "codes", {}),
                 "auto": {k: sorted(v) for k, v in getattr(self, "auto", {}).items()},
                 "code_phrases": getattr(self, "code_phrases", {}), "logos": sorted(getattr(self, "logos", ())),
+                "dup_scopes": getattr(self, "dup_scopes", {}),
                 "bounded": getattr(self, "bounded", [])}
 
     @classmethod
@@ -596,6 +603,7 @@ class Dictionary(object):
         d.auto = {k: set(v) for k, v in obj.get("auto", {}).items()}
         d.code_phrases = dict(obj.get("code_phrases", {}))
         d.logos = set(obj.get("logos", []))
+        d.dup_scopes = dict(obj.get("dup_scopes", {}))
         d.bounded = list(obj.get("bounded", []))
         return d
 

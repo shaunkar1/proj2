@@ -322,6 +322,10 @@ def _task(row):
         data = _download(urlpath, size, path) if size else b""
         t1 = time.time()
         ctx = Ctx(path, scope_of(path))
+        if md5 and path.lower().endswith(".pdf"):
+            also = getattr(engine.D, "dup_scopes", {}).get(md5)
+            if also:
+                ctx.scopes = frozenset(also) | frozenset([ctx.scope])
         try:
             if hasattr(signal, "SIGALRM"):
                 signal.signal(signal.SIGALRM, _alarm)

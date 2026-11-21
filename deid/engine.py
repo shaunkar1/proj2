@@ -221,6 +221,7 @@ class Ctx(object):
         self._seen = set()
         self.numbers_ok = False   # all-digit part numbers may be replaced (names, drawing text)
         self.in_name = False      # a file / folder name is being rewritten
+        self.scopes = None        # collections holding an identical copy of this document (content rules)
         self.digit_spans = []     # phone numbers / postcodes found in the text being scrubbed
         self.notes = []
         self.hits = 0
@@ -413,8 +414,12 @@ class Engine(object):
 
     def _accept(self, data, s, e, entry, ctx, binary):
         n = len(data)
-        if entry.scopes is not None and ctx.scope not in entry.scopes:
-            return False
+        if entry.scopes is not None:
+            if ctx.scopes is None or ctx.in_name:
+                if ctx.scope not in entry.scopes:
+                    return False
+            elif entry.scopes.isdisjoint(ctx.scopes):
+                return False
         if entry.kind == "A":
             if entry.wide or not ctx.numbers_ok or ctx.in_name:
                 return False
@@ -1032,7 +1037,8 @@ class Engine(object):
                 return True
         for s, e, entries in self._candidates(low.decode("latin-1")):
             for entry in entries:
-                if not entry.wide and (entry.scopes is None or ctx.scope in entry.scopes):
+                if not entry.wide and (entry.scopes is None or ctx.scope in entry.scopes
+                                       or (ctx.scopes is not None and not entry.scopes.isdisjoint(ctx.scopes))):
                     return True
         return False
 
