@@ -448,7 +448,7 @@ class Dictionary(object):
             if keep:
                 self.code_phrases[scope] = keep
 
-    def link_duplicates(self, rows, min_shared=3):
+    def link_duplicates(self, rows, min_shared=3, text_only=False):
         """Collections that hold copies of the same files (a curated set next to the
         repository it was taken from, a fork next to its origin) share their names and
         numbers, so a copy is rewritten exactly like its original.  ``rows`` are manifest
@@ -477,7 +477,13 @@ class Dictionary(object):
             if c >= min_shared or a.startswith("existing:") or b.startswith("existing:"):
                 links.setdefault(a, set()).add(b)
         self.links = {a: sorted(bs) for a, bs in links.items()}
-        for attr in ("scoped", "codes", "code_phrases", "auto"):
+        if text_only:
+            # names of files and native-file contents keep their own collection's rules; only
+            # the document-text rules are shared
+            attrs = ("auto",)
+        else:
+            attrs = ("scoped", "codes", "code_phrases", "auto")
+        for attr in attrs:
             cur = getattr(self, attr, None)
             if not cur:
                 continue
@@ -490,7 +496,7 @@ class Dictionary(object):
                 if merged:
                     cur[a] = sorted(merged) if aslist else merged
         snap = {k: [tuple(x) for x in v] for k, v in self.scoped_phrases.items()}
-        for a, bs in links.items():
+        for a, bs in ({} if text_only else links).items():
             merged = list(snap.get(a, []))
             seen = set(merged)
             for b in bs:

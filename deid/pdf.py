@@ -12,6 +12,7 @@ The file is rewritten in full, so earlier revisions kept by incremental saves ar
 If a PDF cannot be parsed it falls back to a same-length pass over its raw bytes.
 """
 import io
+import os
 import re
 
 try:
@@ -56,6 +57,33 @@ def _raw_pass(data, engine, ctx):
     return new if out is None else bytes(out)
 
 
+def _strip_text(pdf):
+    done = False
+    streams = []
+    for page in pdf.pages:
+        streams.append(page)
+    for obj in pdf.objects:
+        try:
+            if isinstance(obj, pikepdf.Stream) and (str(obj.get("/Subtype", "")) == "/Form" or "/PatternType" in obj):
+                streams.append(obj)
+        except Exception:
+            pass
+    for st in streams:
+        try:
+            ops = pikepdf.parse_content_stream(st)
+            keep = [(a, o) for a, o in ops if str(o) not in TEXT_OPS]
+            if len(keep) != len(ops):
+                new = pikepdf.unparse_content_stream(keep)
+                if isinstance(st, pikepdf.Page):
+                    st.obj["/Contents"] = pdf.make_stream(new)
+                else:
+                    st.write(new)
+                done = True
+        except Exception:
+            pass
+    return done
+
+
 def _process_file(path, data, engine, ctx, depth):
     if pikepdf is None:
         ctx.notes.append("pikepdf missing: PDF handled by raw pass only")
@@ -71,6 +99,11 @@ def _process_file(path, data, engine, ctx, depth):
             changed = _process(pdf, path, engine, ctx, depth)
         finally:
             ctx.numbers_ok = False
+        if os.environ.get("DEID_PDF_NOTEXT") == "1":
+            # experiment only: drop every text-showing operator (measures how much of a
+            # document's identity sits in its page text)
+            if _strip_text(pdf):
+                changed = True
         if not changed:
             # nothing in the live document; still clean plain-text leftovers (old
             # incremental revisions, unreferenced objects) without moving any offset
