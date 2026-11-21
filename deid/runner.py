@@ -474,6 +474,12 @@ def run(args):
                     names[rec["path"]] = rec["out_path"]
         want = set(r[0] for r in todo if not (len(r) > 4 and isinstance(r[4], dict)))
         names = {k: v for k, v in names.items() if k in want}
+        keep = int(getattr(args, "names_keep", 0) or 0)
+        if keep:
+            # only the first ``keep`` folders of the earlier name are used (the pseudonymised
+            # source folder); everything below keeps its original name, so the file sits where
+            # a reader of the original tree expects it
+            names = {k: "/".join(v.split("/")[:keep] + k.split("/")[keep:]) for k, v in names.items()}
         cfg["names"] = os.path.join(adir, "names.json")
         with open(cfg["names"], "w") as f:
             json.dump(names, f)
