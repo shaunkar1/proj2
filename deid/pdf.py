@@ -522,52 +522,63 @@ def _helv_width(ch):
     return HELV.get(ord(ch), 556.0)
 
 
-def _kept_advances(old_raw, new_raw, info):
-    """Pieces of a TJ array (bytes and numbers) that show ``new_raw`` while every glyph keeps
-    the slot its predecessor in ``old_raw`` had (centred in it), so the text that follows
-    does not move.  None when no correction is needed or the widths are unknown."""
+def _scaled_runs(old_raw, new_raw, info):
+    """Split ``new_raw`` into (bytes, factor) stretches: every run of replaced glyphs gets the
+    horizontal scaling that makes it exactly as wide as the glyphs it stands for, so each
+    replaced word covers the same area as before (text extraction groups glyphs by the gaps
+    between them) and nothing after it moves.  None when no scaling is needed or the widths
+    are unknown."""
     if info.adv is None or len(old_raw) != len(new_raw):
         return None
     w = info.width
-    items = []
+    n = len(new_raw) // w
+    out = []
+    any_scaled = False
+    k = 0
     start = 0
-    carry = 0.0
-    for i in range(0, len(new_raw) - w + 1, w):
-        if old_raw[i:i + w] == new_raw[i:i + w]:
+    while k < n:
+        if old_raw[k * w:k * w + w] == new_raw[k * w:k * w + w]:
+            k += 1
             continue
-        ao = info.adv.get(int.from_bytes(old_raw[i:i + w], "big"), info.adv_default)
-        an = info.adv.get(int.from_bytes(new_raw[i:i + w], "big"), info.adv_default)
-        if ao is None or an is None:
-            continue
-        d = an - ao
-        if abs(d) < 0.5:
-            continue
-        if i > start:
-            items.append(new_raw[start:i])
-        if items and not isinstance(items[-1], (bytes, bytearray)):
-            items[-1] = round(items[-1] + d / 2.0, 2)
-        else:
-            items.append(round(d / 2.0, 2))
-        items.append(new_raw[i:i + w])
-        items.append(round(d / 2.0, 2))
-        start = i + w
-    if not items:
+        j = k
+        so = sn = 0.0
+        ok = True
+        while j < n and old_raw[j * w:j * w + w] != new_raw[j * w:j * w + w]:
+            ao = info.adv.get(int.from_bytes(old_raw[j * w:j * w + w], "big"), info.adv_default)
+            an = info.adv.get(int.from_bytes(new_raw[j * w:j * w + w], "big"), info.adv_default)
+            if not ao or not an or ao <= 0 or an <= 0:
+                ok = False
+            else:
+                so += ao
+                sn += an
+            j += 1
+        r = round(min(2.5, max(0.4, so / sn)), 4) if ok and sn > 0 else 1.0
+        if abs(r - 1.0) >= 0.004:
+            if k > start:
+                out.append((new_raw[start * w:k * w], 1.0))
+            out.append((new_raw[k * w:j * w], r))
+            start = j
+            any_scaled = True
+        k = j
+    if not any_scaled:
         return None
-    if start < len(new_raw):
-        items.append(new_raw[start:])
-    return items
+    if start < n:
+        out.append((new_raw[start * w:], 1.0))
+    return out
 
 
-def _helv_op(parts):
-    """TJ pieces that show a text operator in Helvetica.  ``parts`` holds numbers (kept kerning)
-    and (text, raw, spans, info) tuples.  Returns (size factor, pieces): the font size is scaled
-    so that Helvetica is as wide as the original face on average, and every glyph is centred in
-    the slot of the glyph it stands for.  None when a character has no cp1252 code."""
-    tot_o = tot_h = 0.0
-    glyphs = []                     # per part: list of (chars, original advance or None)
+def _helv_op(parts, size, tz0):
+    """Operators that show a text operator in Helvetica.  ``parts`` holds numbers (kerning of
+    the TJ array) and (text, raw, spans, info) tuples.  Every word is drawn with the horizontal
+    scaling that makes it exactly as wide as the glyphs it stands for, so nothing after it
+    moves and no gap opens inside it.  None when a character has no cp1252 code."""
+    seq = []                        # ("g", chars, original advance or None) / ("k", number)
     for part in parts:
         if not isinstance(part, tuple):
-            glyphs.append(part)
+            try:
+                seq.append(("k", float(part)))
+            except Exception:
+                pass
             continue
         text, raw, spans, info = part
         try:
@@ -577,7 +588,6 @@ def _helv_op(parts):
         w = info.width
         if spans is None:
             spans = [(i, i + 1) for i in range(len(text))]
-        row = []
         for idx, (a, b) in enumerate(spans):
             grp = text[a:b]
             if not grp:
@@ -585,46 +595,66 @@ def _helv_op(parts):
             ao = None
             if info.adv is not None:
                 ao = info.adv.get(int.from_bytes(raw[idx * w:idx * w + w], "big"), info.adv_default)
-            if ao is not None and ao > 0 and not grp.isspace():
-                tot_o += ao
-                tot_h += sum(_helv_width(c) for c in grp)
-            row.append((grp, ao))
-        glyphs.append(row)
-    f = tot_o / tot_h if tot_h > 0 and tot_o > 0 else 1.0
-    f = min(1.6, max(0.6, f))
-    items = []
-
-    def number(x):
-        if abs(x) < 0.5:
-            return
-        if items and not isinstance(items[-1], (bytes, bytearray)):
-            items[-1] = round(items[-1] + x, 2)
-        else:
-            items.append(round(x, 2))
-
-    def chars(t):
-        bts = t.encode("cp1252")
-        if items and isinstance(items[-1], (bytes, bytearray)):
-            items[-1] = bytes(items[-1]) + bts
-        else:
-            items.append(bts)
-
-    for row in glyphs:
-        if not isinstance(row, list):
-            try:
-                number(float(row) / f)
-            except Exception:
-                pass
+                if ao is not None and ao <= 0:
+                    ao = None
+            seq.append(("g", grp, ao))
+    if not any(x[0] == "g" for x in seq):
+        return None
+    out = []
+    Tz, TJ = pikepdf.Operator("Tz"), pikepdf.Operator("TJ")
+    i = 0
+    n = len(seq)
+    lead = []                       # separators drawn at the original scaling
+    while i < n:
+        x = seq[i]
+        word = x[0] == "g" and not x[1].isspace()
+        if not word:
+            if x[0] == "k":
+                lead.append(round(x[1], 2))
+            else:
+                lead.append(x[1].encode("cp1252"))
+                if x[2] is not None:
+                    d = sum(_helv_width(c) for c in x[1]) - x[2]
+                    if abs(d) >= 0.5:
+                        lead.append(round(d, 2))
+            i += 1
             continue
-        for grp, ao in row:
-            if ao is None:
-                chars(grp)
-                continue
-            d = sum(_helv_width(c) for c in grp) - ao / f
-            number(d / 2.0)
-            chars(grp)
-            number(d / 2.0)
-    return f, items
+        j = i
+        slot = 0.0
+        nat = 0.0
+        chars = []
+        while j < n:
+            y = seq[j]
+            if y[0] == "k":
+                if abs(y[1]) >= 120:
+                    break
+                slot -= y[1]
+            elif y[1].isspace():
+                break
+            else:
+                hw = sum(_helv_width(c) for c in y[1])
+                nat += hw
+                slot += y[2] if y[2] is not None else hw
+                chars.append(y[1])
+            j += 1
+        if lead:
+            out.append(([tz0], Tz))
+            out.append(([_tj_array(lead)], TJ))
+            lead = []
+        r = slot / nat if nat > 0 and slot > 0 else 1.0
+        rc = min(2.5, max(0.4, r))
+        items = ["".join(chars).encode("cp1252")]
+        rest = (nat * rc - slot) / rc
+        if abs(rest) >= 0.5:
+            items.append(round(rest, 2))
+        out.append(([round(tz0 * rc, 3)], Tz))
+        out.append(([_tj_array(items)], TJ))
+        i = j
+    if lead:
+        out.append(([tz0], Tz))
+        out.append(([_tj_array(lead)], TJ))
+    out.append(([tz0], Tz))
+    return out
 
 
 def _tj_array(items):
@@ -640,7 +670,7 @@ def _helv(pdf, holder):
 
 
 _KEEP_ADV = os.environ.get("DEID_PDF_KEEPADV", "1") != "0"
-_NEEDED_OPS = frozenset(("q", "Q", "cm", "BT", "Tf", "Tm", "Td", "TD", "T*", "Tj", "TJ", "'", '"'))
+_NEEDED_OPS = frozenset(("q", "Q", "cm", "BT", "Tf", "Tm", "Td", "TD", "T*", "Tj", "TJ", "'", '"', "Tz"))
 
 
 def _strings_of(raw):
@@ -876,6 +906,7 @@ def _content_stream(target, raw, engine, ctx, resources=None, pdf=None, fcache=N
     need_helv = False
     out_ops = []
     cur = None
+    tz = 100.0
     stack = []
     for oi, (operands, operator) in enumerate(ops):
         if operands is None:
@@ -883,11 +914,13 @@ def _content_stream(target, raw, engine, ctx, resources=None, pdf=None, fcache=N
             continue
         op = str(operator)
         if op == "q":
-            stack.append(cur)
+            stack.append((cur, tz))
         elif op == "Q":
-            cur = stack.pop() if stack else cur
+            cur, tz = stack.pop() if stack else (cur, tz)
         elif op == "Tf" and len(operands) >= 2:
             cur = (operands[0], operands[1])
+        elif op == "Tz" and operands:
+            tz = num(operands[0]) or 100.0
         us = by_op.get(oi)
         if us and oi in fallback_ops and cur is not None and pdf is not None and resources is not None:
             # the embedded subset font lacks a needed glyph: draw this string with Helvetica
@@ -903,48 +936,61 @@ def _content_stream(target, raw, engine, ctx, resources=None, pdf=None, fcache=N
                         parts.append(num(item))
             else:
                 parts.append((us[0].get("new", us[0]["txt"]), us[0]["raw"], us[0]["spans"], us[0]["info"]))
-            shown = _helv_op(parts)
-            if shown and shown[1]:
+            shown = _helv_op(parts, num(cur[1]), tz)
+            if shown:
                 if op == '"' and len(operands) >= 3:
                     out_ops.append(([operands[0]], pikepdf.Operator("Tw")))
                     out_ops.append(([operands[1]], pikepdf.Operator("Tc")))
                 if op in ("'", '"'):
                     out_ops.append(([], pikepdf.Operator("T*")))
-                out_ops.append(([pikepdf.Name("/DeidHelv"), round(num(cur[1]) * shown[0], 4)], pikepdf.Operator("Tf")))
-                out_ops.append(([_tj_array(shown[1])], pikepdf.Operator("TJ")))
+                out_ops.append(([pikepdf.Name("/DeidHelv"), cur[1]], pikepdf.Operator("Tf")))
+                out_ops.extend(shown)
                 out_ops.append(([cur[0], cur[1]], pikepdf.Operator("Tf")))
                 need_helv = True
                 continue
         if us:
-            splice = {}
+            scaled = False
             for unit in us:
                 if "enc" in unit:
-                    kept = _kept_advances(unit["raw"], unit["enc"], unit["info"]) if _KEEP_ADV else None
                     if unit["arr"]:
                         operands[0][unit["pi"]] = pikepdf.String(unit["enc"])
-                        if kept:
-                            splice[unit["pi"]] = kept
-                    elif kept:
-                        if op == '"' and len(operands) >= 3:
-                            out_ops.append(([operands[0]], pikepdf.Operator("Tw")))
-                            out_ops.append(([operands[1]], pikepdf.Operator("Tc")))
-                        if op in ("'", '"'):
-                            out_ops.append(([], pikepdf.Operator("T*")))
-                        out_ops.append(([_tj_array(kept)], pikepdf.Operator("TJ")))
-                        us = None
-                        break
                     else:
                         operands[unit["pi"]] = pikepdf.String(unit["enc"])
-            if us is None:
+                    unit["runs"] = _scaled_runs(unit["raw"], unit["enc"], unit["info"]) if _KEEP_ADV else None
+                    if unit["runs"]:
+                        scaled = True
+            if scaled:
+                flat = []
+                bypi = {x["pi"]: x for x in us}
+                if us[0]["arr"]:
+                    for pi, item in enumerate(operands[0]):
+                        unit = bypi.get(pi)
+                        if unit is not None and unit.get("runs"):
+                            flat.extend(unit["runs"])
+                        else:
+                            flat.append((item, 1.0))
+                else:
+                    flat = list(us[0]["runs"])
+                if op == '"' and len(operands) >= 3:
+                    out_ops.append(([operands[0]], pikepdf.Operator("Tw")))
+                    out_ops.append(([operands[1]], pikepdf.Operator("Tc")))
+                if op in ("'", '"'):
+                    out_ops.append(([], pikepdf.Operator("T*")))
+                now = 1.0
+                buf = []
+                for item, r in flat:
+                    if r != now:
+                        if buf:
+                            out_ops.append(([_tj_array(buf)], pikepdf.Operator("TJ")))
+                            buf = []
+                        out_ops.append(([round(tz * r, 3)], pikepdf.Operator("Tz")))
+                        now = r
+                    buf.append(item)
+                if buf:
+                    out_ops.append(([_tj_array(buf)], pikepdf.Operator("TJ")))
+                if now != 1.0:
+                    out_ops.append(([tz], pikepdf.Operator("Tz")))
                 continue
-            if splice:
-                arr2 = []
-                for pi, item in enumerate(operands[0]):
-                    if pi in splice:
-                        arr2.extend(pikepdf.String(x) if isinstance(x, (bytes, bytearray)) else x for x in splice[pi])
-                    else:
-                        arr2.append(item)
-                operands[0] = arr2
         if us and us[0]["arr"]:
             operands = [pikepdf.Array(operands[0])] + list(operands[1:])
         elif op == "TJ" and operands and isinstance(operands[0], list):
