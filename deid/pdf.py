@@ -186,6 +186,46 @@ def _parse_tounicode(data):
     return table
 
 
+_GLYPH_NAMES = {
+    "space": " ", "exclam": "!", "quotedbl": '"', "numbersign": "#", "dollar": "$", "percent": "%",
+    "ampersand": "&", "quotesingle": "'", "quoteright": "\u2019", "parenleft": "(", "parenright": ")",
+    "asterisk": "*", "plus": "+", "comma": ",", "hyphen": "-", "minus": "-", "period": ".", "slash": "/",
+    "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6", "seven": "7",
+    "eight": "8", "nine": "9", "colon": ":", "semicolon": ";", "less": "<", "equal": "=", "greater": ">",
+    "question": "?", "at": "@", "bracketleft": "[", "backslash": "\\", "bracketright": "]",
+    "asciicircum": "^", "underscore": "_", "grave": "`", "braceleft": "{", "bar": "|", "braceright": "}",
+    "asciitilde": "~", "degree": "\u00b0", "plusminus": "\u00b1", "endash": "\u2013", "emdash": "\u2014",
+    "bullet": "\u2022", "nbspace": " ", "Oslash": "\u00d8", "oslash": "\u00f8", "multiply": "\u00d7",
+}
+
+
+def _differences_table(enc):
+    """code -> text for a simple font with an /Encoding dictionary (/Differences)."""
+    table = {c: chr(c) for c in range(32, 127)}
+    try:
+        code = 0
+        for item in enc.get("/Differences", []):
+            if isinstance(item, pikepdf.Name):
+                name = str(item)[1:]
+                if len(name) == 1:
+                    table[code] = name
+                elif name in _GLYPH_NAMES:
+                    table[code] = _GLYPH_NAMES[name]
+                elif name.startswith("uni") and len(name) == 7:
+                    try:
+                        table[code] = chr(int(name[3:], 16))
+                    except ValueError:
+                        table[code] = "\ufffd"
+                else:
+                    table[code] = "\ufffd"
+                code += 1
+            else:
+                code = int(item)
+    except Exception:
+        return None
+    return table
+
+
 def _font_info(font, cache):
     key = getattr(font, "objgen", None)
     if key in cache and key != (0, 0):
@@ -202,7 +242,25 @@ def _font_info(font, cache):
             if enc is None or str(enc) not in ("/Identity-H", "/Identity-V"):
                 info.ok = False
         elif isinstance(enc, pikepdf.Dictionary) and "/Differences" in enc and "/ToUnicode" not in font:
-            info.ok = False
+            table = _differences_table(enc)
+            if table is None:
+                info.ok = False
+            else:
+                info.to_uni = table
+                rev = {}
+                listed = set()
+                code = 0
+                for item in enc.get("/Differences", []):
+                    if isinstance(item, pikepdf.Name):
+                        listed.add(code)
+                        code += 1
+                    else:
+                        code = int(item)
+                for c, t in table.items():
+                    # an embedded subset only holds the glyphs it lists
+                    if len(t) == 1 and t != "\ufffd" and t not in rev and (c in listed or not info.embedded):
+                        rev[t] = c
+                info.from_uni = rev
         try:
             if subtype == "/Type0":
                 df = font["/DescendantFonts"][0]
@@ -228,7 +286,10 @@ def _font_info(font, cache):
                             i += 3
             elif "/Widths" in font:
                 fc = int(font.get("/FirstChar", 0))
-                info.adv = {fc + k: float(wv) for k, wv in enumerate(font["/Widths"])}
+                factor = 1.0
+                if subtype == "/Type3" and "/FontMatrix" in font:
+                    factor = abs(float(font["/FontMatrix"][0])) * 1000.0
+                info.adv = {fc + k: float(wv) * factor for k, wv in enumerate(font["/Widths"])}
         except Exception:
             info.adv = None
         tu = font.get("/ToUnicode")
