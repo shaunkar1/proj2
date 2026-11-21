@@ -222,6 +222,7 @@ class Ctx(object):
         self.numbers_ok = False   # all-digit part numbers may be replaced (names, drawing text)
         self.in_name = False      # a file / folder name is being rewritten
         self.scopes = None        # collections holding an identical copy of this document (content rules)
+        self.local_seqs = []      # drawing numbers read from this document's title (replaced in its text)
         self.digit_spans = []     # phone numbers / postcodes found in the text being scrubbed
         self.notes = []
         self.hits = 0
@@ -772,6 +773,11 @@ class Engine(object):
             if "@" in near or "www." in near.lower():
                 ctx.digit_spans.append(m.span("p"))
                 ctx.found("pdf-phone", m.group("p"))
+        for lit in ctx.local_seqs:
+            # the document's own number (from its title), wherever the text repeats it
+            rx = "[-_./ ]?".join(re.escape(x) for x in re.split("[-_./]", lit) if x)
+            for m in re.finditer("(?i)(?<![A-Za-z0-9])" + rx + "(?![A-Za-z0-9])", text):
+                span(m.start(), m.end(), "pdf-number", only=_partno_tok)
         for m in PROSE_PARTNO.finditer(text):
             # "DWG NO. 5BHMBA-DA-D-W2", "Zeichnungsnummer: 2020-048-10": the number after the label
             if _partno_ok(m.group("num")):

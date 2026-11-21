@@ -109,16 +109,20 @@ _TITLE_SEQ = re.compile(r"[A-Za-z0-9]+(?:[-_./][A-Za-z0-9]+)*")
 
 def _title_numbers(raw, engine, ctx):
     """A document title usually repeats the drawing's file name: a drawing / part number in
-    it ("S1186-B2P-A Print Head Cable", "LCSAP-304") is replaced in the title and wherever
-    the document text repeats it."""
+    it ("S1186-B2P-A Print Head Cable", "LCSAP-304") is replaced wherever the document
+    text repeats it (the title itself is rewritten by the caller).  Returns the new title
+    text or None."""
     from .engine import _partno_ok, _partno_tok
     from .identities import is_word
+    wide = raw[:2] == b"\xfe\xff"
     try:
-        text = raw[2:].decode("utf-16-be") if raw[:2] == b"\xfe\xff" else raw.decode("latin-1")
+        text = raw[2:].decode("utf-16-be") if wide else raw.decode("latin-1")
     except Exception:
-        return
+        return None
     if len(text) > 200:
-        return
+        return None
+    out = []
+    pos = 0
     for m in _TITLE_SEQ.finditer(text):
         v = m.group(0)
         parts = re.split("[-_./]", v)
@@ -128,10 +132,20 @@ def _title_numbers(raw, engine, ctx):
             ok = any(len(x) >= 2 and x.isalpha() and x.isupper() and not is_word(x.lower()) for x in parts)
         if not ok:
             continue
-        for tok in parts:
-            if _partno_tok(tok) and tok.lower() not in ctx.produced:
-                ctx.local_wide.add(tok.lower())
+        ctx.local_seqs.append(v)
         ctx.found("pdf-number", v)
+        new = re.sub("[A-Za-z0-9]+", lambda t: engine.token(t.group(0)) if _partno_tok(t.group(0)) else t.group(0), v)
+        out.append(text[pos:m.start()] + new)
+        pos = m.end()
+    if not out:
+        return None
+    new_text = "".join(out) + text[pos:]
+    if len(new_text) != len(text) or new_text == text:
+        return None
+    try:
+        return pikepdf.String(b"\xfe\xff" + new_text.encode("utf-16-be")) if wide else pikepdf.String(new_text.encode("latin-1"))
+    except Exception:
+        return None
 
 
 def _walk(obj, engine, ctx, seen, depth=0):
@@ -150,7 +164,10 @@ def _walk(obj, engine, ctx, seen, depth=0):
                 continue
             if isinstance(v, pikepdf.String):
                 if k == "/Title":
-                    _title_numbers(bytes(v), engine, ctx)
+                    nt = _title_numbers(bytes(v), engine, ctx)
+                    if nt is not None:
+                        obj[k] = v = nt
+                        changed = True
                 ident = k in IDENTITY_KEYS and not (k == "/T" and "/Subtype" not in obj)
                 rep = _scrub_pdf_string(v, engine, ctx, identity=ident)
                 if rep is not None:
