@@ -264,14 +264,17 @@ _YEAR = re.compile(r"^(?:19|20)\d\d$")
 _DATE_SEQ = re.compile(r"^(?:(?:19|20)\d\d[-_. ](?:0?[1-9]|1[0-2])[-_. ](?:0?[1-9]|[12]\d|3[01])|(?:0?[1-9]|[12]\d|3[01])[-_. ](?:0?[1-9]|1[0-2])[-_. ](?:19|20)\d\d)$")
 
 
-def _code_part(low):
+def _code_part(tok):
     """A word that can be part of a multi-part number: has a digit, or is a short
     letter group that is not an ordinary word (TA, FAB, SHRPRO)."""
+    low, written = tok.lower(), tok
     if any(c.isdigit() for c in low):
         return True
     if len(low) <= 2:
         return True
-    return len(low) <= 8 and low not in STOP and low not in SOFTWARE and not is_word(low) and not is_foreign_word(low)
+    if len(low) > 8 or (len(low) > 4 and not written.isupper()):
+        return False                                 # Hotend, Bracket: a description, not a code
+    return low not in STOP and low not in SOFTWARE and not is_word(low) and not is_foreign_word(low)
 
 
 def _code_core(low):
@@ -309,13 +312,13 @@ def code_sequences(stem):
             out.append(lit)
 
     for m in ATOM_RE.finditer(stem):
-        low = m.group(0).lower()
+        tok = m.group(0)
         joined = prev_end is not None and m.start() - prev_end == 1 and stem[prev_end] in "-_. "
-        if _code_part(low) and (not run or joined):
+        if _code_part(tok) and (not run or joined):
             run.append(m.span())
         else:
             flush()
-            run = [m.span()] if _code_part(low) else []
+            run = [m.span()] if _code_part(tok) else []
         prev_end = m.end()
     flush()
     return out
