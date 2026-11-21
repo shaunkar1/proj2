@@ -327,7 +327,11 @@ class Engine(object):
             for a in atoms:
                 autos.setdefault(a, set()).add(scope)
         for a, scopes in autos.items():
-            if a in dictionary.strong or a in scoped or a in codes:
+            if a in dictionary.strong:
+                continue
+            # (a word that is a name of some other collection is still this one's document word)
+            scopes = set(scopes) - scoped.get(a, set()) - codes.get(a, set())
+            if not scopes:
                 continue
             add(a, _Entry("A", None, True, frozenset(scopes), False))
         self.code_mode = os.environ.get("DEID_CODES", "1")
