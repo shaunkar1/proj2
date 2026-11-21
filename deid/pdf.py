@@ -104,6 +104,36 @@ def _scrub_pdf_string(obj, engine, ctx, identity=False):
     return None if new == raw else pikepdf.String(new)
 
 
+_TITLE_SEQ = re.compile(r"[A-Za-z0-9]+(?:[-_./][A-Za-z0-9]+)*")
+
+
+def _title_numbers(raw, engine, ctx):
+    """A document title usually repeats the drawing's file name: a drawing / part number in
+    it ("S1186-B2P-A Print Head Cable", "LCSAP-304") is replaced in the title and wherever
+    the document text repeats it."""
+    from .engine import _partno_ok, _partno_tok
+    from .identities import is_word
+    try:
+        text = raw[2:].decode("utf-16-be") if raw[:2] == b"\xfe\xff" else raw.decode("latin-1")
+    except Exception:
+        return
+    if len(text) > 200:
+        return
+    for m in _TITLE_SEQ.finditer(text):
+        v = m.group(0)
+        parts = re.split("[-_./]", v)
+        ok = _partno_ok(v)
+        if not ok and len(parts) >= 2 and sum(c.isdigit() for c in v) >= 3:
+            # "LCSAP-304", "MET-PMP-402": an upper-case letter code with a number
+            ok = any(len(x) >= 2 and x.isalpha() and x.isupper() and not is_word(x.lower()) for x in parts)
+        if not ok:
+            continue
+        for tok in parts:
+            if _partno_tok(tok) and tok.lower() not in ctx.produced:
+                ctx.local_wide.add(tok.lower())
+        ctx.found("pdf-number", v)
+
+
 def _walk(obj, engine, ctx, seen, depth=0):
     """Scrub strings in nested direct dictionaries / arrays.  Returns True if changed."""
     changed = False
@@ -119,6 +149,8 @@ def _walk(obj, engine, ctx, seen, depth=0):
             except Exception:
                 continue
             if isinstance(v, pikepdf.String):
+                if k == "/Title":
+                    _title_numbers(bytes(v), engine, ctx)
                 ident = k in IDENTITY_KEYS and not (k == "/T" and "/Subtype" not in obj)
                 rep = _scrub_pdf_string(v, engine, ctx, identity=ident)
                 if rep is not None:
