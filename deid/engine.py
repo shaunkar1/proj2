@@ -659,6 +659,7 @@ class Engine(object):
             self._learn(" ".join(x for x in ATOM_RE.findall(value) if x.lower() not in own), ctx, person=person)
 
         took = [False]
+        retry = [False]
 
         def persons():
             # candidates may overlap ("DTU MPP Magnus Kjer"): after a rejected one, look
@@ -670,7 +671,10 @@ class Engine(object):
                     return
                 took[0] = False
                 yield mm
-                pos = mm.end() if took[0] else mm.start() + len(mm.group("first"))
+                if took[0]:
+                    pos, retry[0] = mm.end(), False
+                else:
+                    pos, retry[0] = mm.start() + len(mm.group("first")), True
 
         for m in persons():
             first, last = m.group("first"), m.group("last")
@@ -679,6 +683,8 @@ class Engine(object):
             cl = [cls(x) for x in lasts]
             if len(first) < 3 or len(lasts[0]) < 3 or not (first + lasts[0]).isascii() and sum(ch.isascii() for ch in first + lasts[0]) < 4:
                 continue
+            if retry[0] and (c1 != "F" or is_word(first.lower()) or is_foreign_word(first.lower())):
+                continue          # a second look only for an unmistakable given name
             if c1 == "S" or cl[0] == "S":
                 # "Drawn John Smith": try again without the leading generic word
                 if c1 == "S" and len(lasts) == 2 and cl[0] == "F" and cl[1] in ("N", "F", "L"):
