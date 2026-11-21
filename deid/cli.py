@@ -40,6 +40,7 @@ def main(argv=None):
     r.add_argument("--only-ext", default="", help="with --reuse-from: extensions to re-process, e.g. .pdf,.zip")
     r.add_argument("--only-prefix", default="", help="with --reuse-from: also re-process paths with this prefix")
     r.add_argument("--names-from", default="", help="attempt number whose output names are kept for the files produced now")
+    r.add_argument("--copy-rename-ext", default="", help="with --reuse-from: copied files with these extensions get the --names-keep / --names-mode name instead of the earlier one")
     r.add_argument("--names-mode", default="", help="with --names-keep: 'ident' also keeps earlier replacements of words taken from the source folder's own name")
     r.add_argument("--names-keep", type=int, default=0, help="with --names-from: keep only this many leading folders of the earlier name; the rest of the path stays original")
 

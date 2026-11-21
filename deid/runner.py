@@ -257,11 +257,39 @@ _NAME_TOK = re.compile(r"[A-Za-z0-9]+")
 _NAME_ATOM = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
 
 
-def _ident_name(orig, earlier, keep):
+def _owner_atoms(paths):
+    """Owner names of every source folder / archive in the corpus (owner__project)."""
+    from .identities import is_word
+    out = set()
+    for p in paths:
+        c = p.split("/")
+        comp = c[2] if c[0] == "sources" and len(c) > 2 else os.path.splitext(c[1])[0] if len(c) > 1 else ""
+        if "__" not in comp:
+            continue
+        flat = "".join(_NAME_TOK.findall(comp.split("__")[0])).lower()
+        if len(flat) >= 4 and not flat.isdigit() and not is_word(flat):
+            out.add(flat)
+    return _Owners(out)
+
+
+class _Owners(frozenset):
+    """Set of owner names with a fast 'does this word contain one' test."""
+
+    def within(self, low):
+        rx = getattr(self, "_rx", None)
+        if rx is None:
+            long = sorted((a for a in self if len(a) >= 5), key=len, reverse=True)
+            rx = self._rx = re.compile("|".join(re.escape(a) for a in long)) if long else re.compile(r"(?!x)x")
+        return rx.search(low) is not None
+
+
+def _ident_name(orig, earlier, keep, extra=frozenset()):
     """Earlier output name with every change below the first ``keep`` folders undone, except
     where the changed word belongs to the name of the source folder itself (owner, project)."""
     from .identities import is_word
     ko, vo = orig.split("/"), earlier.split("/")
+    if ko[:2] == ["sources", "existing"]:
+        keep = 2            # collections of copies: no folder of their own names anyone
     if len(ko) != len(vo):
         return "/".join(vo[:keep] + ko[keep:])
     atoms = set()
@@ -292,7 +320,9 @@ def _ident_name(orig, earlier, keep):
             if co[s:e] == cv[s:e]:
                 continue
             low = co[s:e].lower()
-            if low in atoms or any(a in low for a in atoms if len(a) >= 5):
+            if low in atoms or low in extra or any(a in low for a in atoms if len(a) >= 5):
+                buf[s:e] = cv[s:e]
+            elif extra and len(low) >= 6 and hasattr(extra, "within") and extra.within(low):
                 buf[s:e] = cv[s:e]
         out.append("".join(buf))
     return "/".join(out)
@@ -323,11 +353,11 @@ def _copy_phase(rows, cfg, record, stop_file, nthreads=48):
             try:
                 if not os.path.exists(stop_file):
                     ok = _copy_with(holder, cfg, cfg["prev_prefix"] + "corpus/" + prev["out_path"],
-                                    cfg["prefix"] + "corpus/" + prev["out_path"])
+                                    cfg["prefix"] + "corpus/" + (prev.get("dst_path") or prev["out_path"]))
             except Exception:
                 ok = False
             if ok:
-                record({"path": r[0], "in": r[1], "ok": True, "copied": True, "out_path": prev["out_path"],
+                record({"path": r[0], "in": r[1], "ok": True, "copied": True, "out_path": prev.get("dst_path") or prev["out_path"],
                         "out": prev.get("out", 0), "md5": prev.get("md5"), "changed": prev.get("changed"), "hits": 0,
                         "notes": prev.get("notes", []), "findings": prev.get("findings", []),
                         "t": [0, 0, round(time.time() - t0, 2)]})
@@ -472,10 +502,17 @@ def run(args):
                         prevrec[rec["path"]] = rec
         ncopy = 0
         new_todo = []
+        copy_rename = set(x.strip().lower() for x in (getattr(args, "copy_rename_ext", "") or "").split(",") if x.strip())
+        ckeep = int(getattr(args, "names_keep", 0) or 0) or 3
+        cident = getattr(args, "names_mode", "") == "ident"
+        owners = _owner_atoms([r[0] for r in rows]) if copy_rename else frozenset()
         for r in todo:
             pr = prevrec.get(r[0])
             if pr is not None and handlers.ext_of(r[0]) not in only and not (args.only_prefix and r[0].startswith(args.only_prefix)):
                 slim = {k: pr.get(k) for k in ("out_path", "out", "md5", "changed", "notes", "findings")}
+                if handlers.ext_of(r[0]) in copy_rename:
+                    slim["dst_path"] = (_ident_name(r[0], pr["out_path"], ckeep, owners) if cident else
+                                        "/".join(pr["out_path"].split("/")[:ckeep] + r[0].split("/")[ckeep:]))
                 new_todo.append(r + (slim,))
                 ncopy += 1
             else:
@@ -526,7 +563,8 @@ def run(args):
             # source folder); everything below keeps its original name, so the file sits where
             # a reader of the original tree expects it
             ident = getattr(args, "names_mode", "") == "ident"
-            names = {k: (_ident_name(k, v, keep) if ident else "/".join(v.split("/")[:keep] + k.split("/")[keep:]))
+            owners = _owner_atoms([r[0] for r in rows]) if ident else frozenset()
+            names = {k: (_ident_name(k, v, keep, owners) if ident else "/".join(v.split("/")[:keep] + k.split("/")[keep:]))
                      for k, v in names.items()}
         cfg["names"] = os.path.join(adir, "names.json")
         with open(cfg["names"], "w") as f:
