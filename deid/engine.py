@@ -214,12 +214,33 @@ class Engine(object):
         for scope, atoms in dictionary.scoped.items():
             for a in atoms:
                 scoped.setdefault(a, set()).add(scope)
+        inner = [a for a in dictionary.strong
+                 if len(a) >= 6 or (len(a) >= 5 and any(c.isdigit() for c in a) and any(c.isalpha() for c in a))]
         for a, scopes in scoped.items():
             if a in dictionary.strong:
+                continue
+            if len(a) >= 7 and any(x in a for x in inner):
+                # a project name built on a corpus-wide name ("acmerobot"): same everywhere
+                add(a, _Entry("S", None, False, None, False))
+                add(_u16(a), _Entry("S", None, False, None, True))
                 continue
             add(a, _Entry("C", None, True, frozenset(scopes), False))
             add(_u16(a), _Entry("C", None, True, frozenset(scopes), True))
         self._pats = pats
+        # distinctive names that are also matched inside longer words: a longer word that
+        # is replaced as a whole keeps the same pseudonym for that part (see token())
+        self._inner = sorted((a for a in dictionary.strong
+                              if len(a) >= 6 or (len(a) >= 5 and any(c.isdigit() for c in a) and any(c.isalpha() for c in a))),
+                             key=len, reverse=True)
+        self._inner_set = set(self._inner)
+        self._inner_auto = None
+        if ahocorasick is not None and self._inner:
+            B = ahocorasick.Automaton()
+            for a in self._inner:
+                B.add_word(a, len(a))
+            B.make_automaton()
+            self._inner_auto = B
+        self._tok_cache = {}
         self._auto = None
         self._rx = None
         if ahocorasick is not None:
@@ -231,6 +252,45 @@ class Engine(object):
                 self._auto = A
         if self._auto is None and pats:
             self._rx = _trie_regex(pats.keys())
+
+    def token(self, t):
+        """Pseudonym of one whole word.  Parts that are corpus-wide names on their own
+        ("acme" in "AcmeRobot") get exactly the pseudonym they get elsewhere."""
+        low = t.lower()
+        cuts = self._tok_cache.get(low)
+        if cuts is None:
+            cuts = []
+            if low not in self._inner_set and len(low) >= 6:
+                found = []
+                if self._inner_auto is not None:
+                    for end, n in self._inner_auto.iter(low):
+                        found.append((end - n + 1, end + 1))
+                else:
+                    for a in self._inner:
+                        i = low.find(a)
+                        while i >= 0:
+                            found.append((i, i + len(a)))
+                            i = low.find(a, i + 1)
+                found.sort(key=lambda c: (c[0], -(c[1] - c[0])))
+                last = 0
+                for a, b in found:
+                    if a >= last:
+                        cuts.append((a, b))
+                        last = b
+            if len(self._tok_cache) < 500000:
+                self._tok_cache[low] = cuts
+        if not cuts:
+            return pseudo.atom(t)
+        out = []
+        i = 0
+        for a, b in cuts:
+            if a > i:
+                out.append(pseudo.atom(t[i:a]))
+            out.append(pseudo.atom(t[a:b]))
+            i = b
+        if i < len(t):
+            out.append(pseudo.atom(t[i:]))
+        return "".join(out)
 
     # -- global candidates --------------------------------------------
     def _candidates(self, low_str):
@@ -289,12 +349,12 @@ class Engine(object):
                     out.append(t[i])
                     i += 1
                 piece = t[i:i + len(a)]
-                out.append(piece if a in STOP else pseudo.atom(piece))
+                out.append(piece if a in STOP else self.token(piece))
                 i += len(a)
             out.append(t[i:])
             r = "".join(out)
         else:
-            r = pseudo.atom(t)
+            r = self.token(t)
         rb = r.encode("utf-16-le") if entry.wide else r.encode("latin-1")
         return rb if len(rb) == len(orig) else orig
 
@@ -759,7 +819,7 @@ class Engine(object):
             return
         if in_field and low in TLDS and s > 0 and data[s - 1] == 0x2E:
             return  # keep the top-level domain of an address
-        r = pseudo.atom(t)
+        r = self.token(t)
         rb = r.encode("utf-16-le") if wide else r.encode("latin-1")
         if len(rb) != len(raw):
             return
@@ -846,7 +906,7 @@ class Engine(object):
             out.append(v[last:m.start()])
             seg_new = v[m.start():m.end()]
             if seg_new == m.group(0) and not keep(m.group(0).lower()) and len(m.group(0)) >= 2:
-                seg_new = pseudo.atom(m.group(0))
+                seg_new = self.token(m.group(0))
                 ctx.hits += 1
             ctx.produced.add(seg_new.lower())
             out.append(seg_new)
