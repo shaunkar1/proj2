@@ -335,6 +335,7 @@ class Engine(object):
                 continue
             add(a, _Entry("A", None, True, frozenset(scopes), False))
         self.code_mode = os.environ.get("DEID_CODES", "1")
+        self.scope_words = os.environ.get("DEID_SCOPE_WORDS") == "1"
         self._pats = pats
         # distinctive names that are also matched inside longer words: a longer word that
         # is replaced as a whole keeps the same pseudonym for that part (see token())
@@ -481,7 +482,7 @@ class Engine(object):
             return False
         return True
 
-    def _replacement(self, orig, entry):
+    def _replacement(self, orig, entry, all_words=False):
         if entry.wide:
             t = orig.decode("utf-16-le", "replace")
         else:
@@ -498,7 +499,8 @@ class Engine(object):
                 if code:      # revision letters and plain version / size parts stay
                     keep = len(a) <= 2 or (not a.isdigit() and (CODE_GENERIC.match(a) or is_word(a)))
                 else:
-                    keep = a in STOP
+                    # (in a document of the collection the phrase names, its ordinary words go too)
+                    keep = a in STOP and not (all_words and len(a) >= 3)
                 out.append(piece if keep else self.token(piece))
                 i += len(a)
             out.append(t[i:])
@@ -527,7 +529,8 @@ class Engine(object):
         for s, e, entry in cands:
             if s < last:
                 continue
-            plan.append((s, e, self._replacement(data[s:e], entry)))
+            plan.append((s, e, self._replacement(data[s:e], entry,
+                                                 self.scope_words and ctx.numbers_ok and not ctx.in_name)))
             last = e
         return plan
 
