@@ -198,7 +198,7 @@ def strong_atom(low):
 
 
 _SCOPE_WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
-_SCOPE_STOP = frozenset("and the for with from that this into over under".split())
+_SCOPE_STOP = frozenset("and the for with from that this into over under not are was has its our you all any".split())
 
 
 def scope_of(path):
@@ -476,7 +476,7 @@ class Dictionary(object):
                     words.add(a.lower())
             words = set(w for w in words
                         if not w.isdigit() and not HEX12.match(w) and w not in _SCOPE_STOP
-                        and (len(w) >= 4 or (len(w) == 3 and not is_word(w))))
+                        and len(w) >= 3)
             if words:
                 self.auto.setdefault(scope, set()).update(words)
                 n += len(words)
