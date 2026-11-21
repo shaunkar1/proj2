@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+state/
+logs/
+.venv/
+input/
+cleaned-corpus/
+*.key
+*.private.json
+token.txt
