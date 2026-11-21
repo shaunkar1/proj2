@@ -18,11 +18,26 @@ FREESECT = 0xFFFFFFFF
 FMT_SUMMARY = bytes.fromhex("e0859ff2f94f6810ab9108002b27b3d9")
 FMT_DOCSUMMARY = bytes.fromhex("02d5cdd59c2e1b10939708002b2cf9ae")
 FMT_INV_DESIGN = bytes.fromhex("0f3f85324434d1119e930060b03c1ca6")
-IDENTITY_PROPS = {
+class _Props(dict):
+    """fmtid -> identity property ids; some vendor sets are recognised by their first bytes."""
+    PREFIX = {
+        bytes.fromhex("39de383d"): {4, 8},        # Inventor Summary Information: author, last saved by
+        bytes.fromhex("30fb61d8"): {16},          # Inventor Design Tracking Control: account
+        bytes.fromhex("0080f58c"): {14, 15},      # Inventor Document Summary Information: manager, company
+        bytes.fromhex("a24f02cc"): {8, 20},       # Solid Edge: account, full name
+    }
+
+    def get(self, fmtid, default=None):
+        if fmtid in self:
+            return self[fmtid]
+        return self.PREFIX.get(bytes(fmtid[:4]), default)
+
+
+IDENTITY_PROPS = _Props({
     FMT_SUMMARY: {4, 8},
     FMT_DOCSUMMARY: {14, 15},
     FMT_INV_DESIGN: {10, 12, 17, 30, 41, 42, 43},
-}
+})
 
 
 class Ole(object):

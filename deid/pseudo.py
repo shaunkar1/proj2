@@ -87,3 +87,34 @@ def text(value, keep=None):
             return a
         return atom(a)
     return ATOM_RE.sub(rep, value)
+
+
+_BLOCKS = ((0x4E00, 0x9FA5, 0x4E00, 0x4E00 + 6000), (0x3041, 0x3096, 0x3041, 0x3093), (0x30A1, 0x30FA, 0x30A1, 0x30F3),
+           (0xAC00, 0xD7A3, 0xAC00, 0xD7A3), (0x0430, 0x044F, 0x0430, 0x044F), (0x0410, 0x042F, 0x0410, 0x042F),
+           (0x03B1, 0x03C9, 0x03B1, 0x03C9), (0x0391, 0x03A9, 0x0391, 0x03A9), (0x05D0, 0x05EA, 0x05D0, 0x05EA),
+           (0x0621, 0x064A, 0x0621, 0x064A), (0x0E01, 0x0E2E, 0x0E01, 0x0E2E))
+FOREIGN_RE = re.compile("[\u0391-\u03a9\u03b1-\u03c9\u0410-\u044f\u05d0-\u05ea\u0621-\u064a\u0e01-\u0e2e"
+                        "\u3041-\u3096\u30a1-\u30fa\u4e00-\u9fa5\uac00-\ud7a3]+")
+
+
+def foreign(value):
+    """Pseudonymise runs of non-Latin letters (CJK, kana, Hangul, Cyrillic, Greek, Hebrew,
+    Arabic, Thai): each letter becomes another letter of the same script."""
+    def rep(m):
+        run = m.group(0)
+        rnd = _stream(run.encode("utf-8"), 2 * len(run))
+        out = []
+        for i, ch in enumerate(run):
+            o = ord(ch)
+            r = rnd[2 * i] * 256 + rnd[2 * i + 1]
+            for lo, hi, a, b in _BLOCKS:
+                if lo <= o <= hi:
+                    n = a + r % (b - a + 1)
+                    if n == o:
+                        n = a + (n - a + 1) % (b - a + 1)
+                    out.append(chr(n))
+                    break
+            else:
+                out.append(ch)
+        return "".join(out)
+    return FOREIGN_RE.sub(rep, value)

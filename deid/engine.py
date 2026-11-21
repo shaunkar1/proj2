@@ -794,6 +794,15 @@ class Engine(object):
         if not value or value.strip().lower() in FIELD_STOP:
             return value
         atoms0 = [a.lower() for a in ATOM_RE.findall(value)]
+        if not atoms0 and pseudo.FOREIGN_RE.search(value):
+            # a name written in a non-Latin script
+            new = pseudo.foreign(value)
+            if new != value and value not in ctx.produced:
+                ctx.found(kind, value)
+                ctx.produced.add(new)
+                ctx.hits += 1
+                return new
+            return value
         if any(a in SOFTWARE for a in atoms0) or all(a in ctx.produced or a in STOP for a in atoms0):
             return value
         ctx.found(kind, value)
