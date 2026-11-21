@@ -141,12 +141,19 @@ CURATED_PHRASES = [
 _NAMES = None
 
 
+def _unaccent(low):
+    if low.isascii():
+        return low
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFKD", low) if not unicodedata.combining(c))
+
+
 def is_first_name(low):
     global _NAMES
     if _NAMES is None:
         with gzip.open(os.path.join(HERE, "data", "names.txt.gz"), "rt") as f:
             _NAMES = set(f.read().split())
-    return low in _NAMES
+    return low in _NAMES or (not low.isascii() and _unaccent(low) in _NAMES)
 
 
 _SURNAMES = None
@@ -157,7 +164,7 @@ def is_surname(low):
     if _SURNAMES is None:
         with gzip.open(os.path.join(HERE, "data", "surnames.txt.gz"), "rt") as f:
             _SURNAMES = set(f.read().split())
-    return low in _SURNAMES
+    return low in _SURNAMES or (not low.isascii() and _unaccent(low) in _SURNAMES)
 
 
 _FOREIGN = None

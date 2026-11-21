@@ -115,16 +115,25 @@ PROSE_ORG_PREFIX = re.compile(
     "Fundaci\xf3|Fundaci\xf3n|Fondazione|Laboratory|Department|Dept\\.?|Faculty|Centre|Center)(?: of| de| di| del| della| f\xfcr| for| d')?(?: the| la| les)?)"
     "(?:[ \t]+|[ \t]*\n[ \t]*)(?P<name>(?:%s|[%s]{2,})(?:[ \t]+(?:%s|[%s]{2,}|of|de|di|and|at)){0,3})" % (_CAPW, _UP, _CAPW, _UP), re.I)
 PROSE_COPYRIGHT = re.compile(
-    "(?:\xa9|\\(c\\)|\\bCopyright\\b|\\bCOPYRIGHT\\b)[ \t]*(?:\xa9|\\(c\\))?[ \t]*(?:\\d{4}(?:[ \t]*[-,][ \t]*\\d{2,4})*)?[ \t]*,?[ \t]*(?:by[ \t]+)?"
+    "(?:\xa9|\\(c\\)|\\bCopyright\\b|\\bCOPYRIGHT\\b)[ \t]*(?:\xa9|\\(c\\))?[ \t]*(?:\\d{4}(?:[ \t]*[-,][ \t]*\\d{2,4})*)?[ \t]*,?[ \t]*(?:by[ \t]*:?[ \t]+)?"
     "(?P<name>(?:%s|[%s0-9]{2,}|&)(?:[ \t.,]+(?:%s|[%s0-9]{2,}|&|and|of|de)){0,4})" % (_CAPW, _UP, _CAPW, _UP))
 PROSE_PROPERTY = re.compile(
     "(?i)\\b(?:sole )?property of[ \t\r\n]+(?:the[ \t\r\n]+)?(?P<name>[^<>.;:\r\n]{3,60}?(?:\n[^<>.;:\r\n]{2,40}?)?)[ \t]*(?=[.;,]|\n\n|$|[ \t\n]+(?:any|and its|is|it|without|reproduction)\\b)")
+_PARTICLES = "van|von|de|der|den|del|della|di|da|dos|du|le|la|ten|ter|zu|af|av"
 PROSE_LABEL = re.compile(
     "(?i)(?<![A-Za-z\xc0-\xff])(?:drawn|drawn by|designed|designed by|design by|checked|checked by|approved|approved by|appr\\.?|"
     "author|authors|engineer|created by|made by|prepared by|modified by|reviewed by|released by|drafter|draftsman|designer|"
     "dibuixat|dissenyat|comprovat|aprovat|dessin\xe9 par|dessinateur|gezeichnet|gepr\xfcft|bearbeitet|bearb\\.?|gez\\.?|erstellt|"
     "dibujado|dise\xf1ado|revisado|aprobado|disegnato|progettista|autor|responsable|ersteller|konstrukteur|name|contact|contacte|contacto)"
-    "[ \t]*(?:by|von|por|par)?[ \t]*[:.][ \t]*(?P<name>%s(?:[ \t]+(?:%s|[%s]\\.)){0,3})" % (_NAMEW, _NAMEW, _UP))
+    "[ \t]*(?:by|von|por|par)?[ \t]*[:.][ \t]*(?P<name>%s(?:[ \t]+(?:(?:%s)[ \t]+){0,2}(?:%s|[%s]\\.)){0,3})" % (_NAMEW, _PARTICLES, _NAMEW, _UP))
+NAME_PARTICLES = set(_PARTICLES.split("|"))
+# title-block rows "DRAWN EJG 12/5/17": initials, an account or a name between the label and the date
+PROSE_SIGNED = re.compile(
+    "(?<![A-Za-z])(?:DRAWN BY|DRAWN|CHECKED BY|CHECKED|CHK'?D|APPV'?D|APPR'?D|APPROVED BY|APPROVED|DESIGNED BY|DESIGNED|DRN|CHKD|"
+    "ENG APPR\\.?|MFG APPR\\.?|Q\\.A\\.?|QA)[ \t]+(?P<name>[A-Z]{2,4}|[a-z]{3,12}|[A-Z]\\.[ \t]?[A-Z][a-z]+|[A-Z][a-z]+(?:[ \t][A-Z][a-z]+)?)"
+    "[ \t]+(?=[0-9]{1,4}[/.\\-][0-9]{1,2}[/.\\-][0-9]{1,4})")
+# a line of digit groups right under / above an e-mail or web address: a phone number
+PROSE_BARE_PHONE = re.compile("(?m)^[ \t]*(?P<p>\\+?[0-9]{2,4}(?:[ .\\-][0-9]{2,4}){2,4})[ \t]*$")
 PROSE_PARTNO = re.compile(
     "(?i)(?<![A-Za-z\xc0-\xff])(?:(?:drawing|dwg|drg|drw|part|item|document|doc|artikel|article|zeichnungs?|zeichn|teile?|sach|"
     "ident|plan|plano|dibujo|dessin|codi|c\xf3digo|codigo|reference|serial|order|job|model|modell)[ \t./-]{0,2}"
@@ -649,7 +658,21 @@ class Engine(object):
             ctx.found(kind, value)
             self._learn(" ".join(x for x in ATOM_RE.findall(value) if x.lower() not in own), ctx, person=person)
 
-        for m in PROSE_PERSON.finditer(text):
+        took = [False]
+
+        def persons():
+            # candidates may overlap ("DTU MPP Magnus Kjer"): after a rejected one, look
+            # again from its second word
+            pos = 0
+            while True:
+                mm = PROSE_PERSON.search(text, pos)
+                if not mm:
+                    return
+                took[0] = False
+                yield mm
+                pos = mm.end() if took[0] else mm.start() + len(mm.group("first"))
+
+        for m in persons():
             first, last = m.group("first"), m.group("last")
             lasts = last.split()
             c1 = cls(first)
@@ -660,6 +683,7 @@ class Engine(object):
                 # "Drawn John Smith": try again without the leading generic word
                 if c1 == "S" and len(lasts) == 2 and cl[0] == "F" and cl[1] in ("N", "F", "L"):
                     span(m.start("last"), m.end("last"), "pdf-person", True)
+                    took[0] = True
                 continue
             caps_all = first.isupper() and lasts[0].replace("-", "").isupper()
             mid = bool(m.group("mid").strip())
@@ -672,10 +696,14 @@ class Engine(object):
                 ok = True
             elif c1 == "N" and cl[0] == "F" and not caps_all and len(first) >= 4:
                 ok = True            # family name first
+            elif (c1 == "F" and len(lasts) == 2 and cl[0] in ("W", "L") and cl[1] == "N" and len(lasts[1]) >= 4
+                  and not caps_all and not mid):
+                ok = True            # "Magnus Bolt Kjer": given name, middle name that is also a word, family name
             elif c1 in ("N", "L") and cl[0] in ("N", "L") and mid and not caps_all:
                 ok = True            # Xxxx Q. Yyyy
             if not ok:
                 continue
+            took[0] = True
             if len(lasts) == 2 and cl[1] in ("N", "F", "L") and not (cl[1] == "L" and caps_all):
                 span(m.start("first"), m.end("last"), "pdf-person", True)
             else:
@@ -688,9 +716,35 @@ class Engine(object):
             if cls(m.group("last")) != "S" and len(set(m.group("last").lower())) > 2:
                 span(m.start("last"), m.end("last"), "pdf-person", True)
         for m in PROSE_LABEL.finditer(text):
-            toks = m.group("name").split()
-            if toks and all(cls(t) in ("F", "N") for t in toks if len(t.strip(".")) > 1):
-                span(m.start("name"), m.end("name"), "pdf-person", True)
+            toks = [t for t in m.group("name").split() if t not in NAME_PARTICLES]
+            if not toks:
+                continue
+            if all(cls(t) in ("F", "N") for t in toks if len(t.strip(".")) > 1):
+                span(m.start("name"), m.end("name"), "pdf-person", True, only=lambda t: t not in NAME_PARTICLES)
+            elif (len(toks) >= 2 and len(toks) < len(m.group("name").split()) and cls(toks[0]) in ("F", "N")
+                  and all(cls(t) in ("F", "N", "L") for t in toks[1:] if len(t.strip(".")) > 1)):
+                # "made by: Menno van den Berg": a family name with particles
+                span(m.start("name"), m.end("name"), "pdf-person", True, only=lambda t: t not in NAME_PARTICLES)
+        for m in PROSE_SIGNED.finditer(text):
+            v = m.group("name")
+            low = v.lower()
+            if low in PROSE_STOP or low in STOP or low in ("date", "name", "size", "sign", "none", "title", "sheet", "scale"):
+                continue
+            if v.islower() and (is_word(low) or is_foreign_word(low)):
+                continue
+            if v.isupper() and len(v) == 4 and is_word(low):
+                continue
+            span(m.start("name"), m.end("name"), "pdf-person", True)
+        for m in PROSE_BARE_PHONE.finditer(text):
+            digits = sum(ch.isdigit() for ch in m.group("p"))
+            if not 8 <= digits <= 13:
+                continue
+            a = text.rfind("\n", 0, max(0, m.start() - 1))
+            b = text.find("\n", m.end() + 1)
+            near = text[max(0, a if a >= 0 else 0):m.start()] + text[m.end():b if b >= 0 else len(text)]
+            if "@" in near or "www." in near.lower():
+                ctx.digit_spans.append(m.span("p"))
+                ctx.found("pdf-phone", m.group("p"))
         for m in PROSE_PARTNO.finditer(text):
             # "DWG NO. 5BHMBA-DA-D-W2", "Zeichnungsnummer: 2020-048-10": the number after the label
             if _partno_ok(m.group("num")):
@@ -713,7 +767,7 @@ class Engine(object):
         for m in PROSE_COPYRIGHT.finditer(text):
             toks = [t for t in m.group("name").replace(",", " ").split()]
             if toks and toks[0][0].isalpha() and cls(toks[0]) != "S" and toks[0].lower() not in DETERMINERS:
-                span(m.start("name"), m.end("name"), "pdf-org")
+                span(m.start("name"), m.end("name"), "pdf-org", only=lambda t: not t.isdigit())
         for m in PROSE_PROPERTY.finditer(text):
             v = m.group("name").strip()
             first = v.split()[0] if v.split() else ""
