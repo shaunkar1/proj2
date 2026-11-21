@@ -468,7 +468,8 @@ class Dictionary(object):
                             pairs[(a, b)] = pairs.get((a, b), 0) + 1
         links = {}
         for (a, b), c in pairs.items():
-            if c >= min_shared:
+            # a curated collection ("existing/...") is made of copies: one shared file links it
+            if c >= min_shared or a.startswith("existing:") or b.startswith("existing:"):
                 links.setdefault(a, set()).add(b)
         self.links = {a: sorted(bs) for a, bs in links.items()}
         for attr in ("scoped", "codes", "code_phrases", "auto"):
