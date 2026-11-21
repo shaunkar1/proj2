@@ -112,6 +112,34 @@ def _strip_text(pdf):
     return done
 
 
+def _nuke(pdf, engine):
+    try:
+        if "/Metadata" in pdf.Root:
+            del pdf.Root["/Metadata"]
+    except Exception:
+        pass
+    try:
+        info = pdf.trailer.get("/Info")
+        if info is not None:
+            for k in list(info.keys()):
+                v = info[k]
+                if isinstance(v, pikepdf.String) and not str(k).endswith("Date"):
+                    t = re.sub(r"[A-Za-z0-9]+", lambda m: engine.token(m.group(0)), str(v))
+                    info[k] = pikepdf.String(t)
+    except Exception:
+        pass
+    for obj in pdf.objects:
+        try:
+            if isinstance(obj, pikepdf.Stream):
+                sub = str(obj.get("/Subtype", ""))
+                if sub == "/Image":
+                    _blank_image(obj, 255)
+                elif sub == "/XML" or str(obj.get("/Type", "")) == "/Metadata":
+                    obj.write(b"")
+        except Exception:
+            pass
+
+
 def _process_file(path, data, engine, ctx, depth):
     if pikepdf is None:
         ctx.notes.append("pikepdf missing: PDF handled by raw pass only")
@@ -134,6 +162,13 @@ def _process_file(path, data, engine, ctx, depth):
             # document's identity sits in its page text)
             if _strip_text(pdf):
                 changed = True
+        if os.environ.get("DEID_PDF_NUKE") == "1":
+            # experiment only: nothing readable is left in the document - no page text, no
+            # pictures, every document property a pseudonym (measures what the remaining
+            # findings depend on)
+            _strip_text(pdf)
+            _nuke(pdf, engine)
+            changed = True
         if not changed:
             # nothing in the live document; still clean plain-text leftovers (old
             # incremental revisions, unreferenced objects) without moving any offset
