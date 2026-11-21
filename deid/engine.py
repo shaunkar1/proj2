@@ -103,6 +103,8 @@ ORG_SUFFIX = (r"(?:Inc|Incorporated|LLC|L\.L\.C|Ltd|Limited|GmbH|AG|KG|Co|Corp|C
               r"Technologies|Technology|Engineering|Industries|Industrial|Systems|Solutions|Manufacturing|Instruments|"
               r"Electronics|Robotics|Labs|Lab|Laboratory|Laboratories|Institute|Foundation|Associates|Group|Works|Machining|"
               r"Enterprises|Designs|Studio|Studios|Aerospace|Automation|Dynamics|Motors|Tools|Tooling|Precision)")
+PROSE_DOTTED = re.compile(
+    "(?<![A-Za-z0-9\xc0-\xff.])(?P<ini>[%s]\\.)(?P<last>[%s][%s]{3,}|[%s]{4,})(?![A-Za-z0-9\xc0-\xff])" % (_UP, _UP, _LO, _UP))
 PROSE_ORG = re.compile(
     "(?<![A-Za-z\xc0-\xff])(?P<name>(?:%s|[%s][%s0-9]+)(?:[ \t]+(?:%s|[%s][%s0-9]+|&|and|of|de|di|for)){0,3})"
     "[ \t]*,?[ \t]+(?P<suf>%s)(?:\\.|(?![A-Za-z0-9\xc0-\xff]))" % (_CAPW, _UP, _UP, _CAPW, _UP, _UP, ORG_SUFFIX))
@@ -124,8 +126,8 @@ PROSE_LABEL = re.compile(
     "[ \t]*(?:by|von|por|par)?[ \t]*[:.][ \t]*(?P<name>%s(?:[ \t]+(?:%s|[%s]\\.)){0,3})" % (_NAMEW, _NAMEW, _UP))
 PROSE_URL = re.compile(r"(?i)(?<![A-Za-z0-9@._-])(?:https?://|www\.)(?P<host>[A-Za-z0-9][A-Za-z0-9.-]{1,80}\.[A-Za-z]{2,12})(?P<path>/[^\s<>\"')\]]{0,120})?")
 PROSE_PHONE = re.compile(
-    r"(?i)(?:(?:tel|phone|fax|mobile|mob|cell|tlf|telf|t\xe9l|telefon|tel\xe9fono|telefono)\.?[ \t]*(?:no\.?|number|#)?[ \t]*[:.]?[ \t]*(?P<a>\+?\(?\d[\d ().\-/]{6,18}\d)"
-    r"|(?<![\w.,/-])(?P<b>\+\d{1,3}[ .-]?\(?\d{1,4}\)?(?:[ .-]?\d{2,4}){2,4})(?![\w.,/-])"
+    r"(?i)(?:(?<![A-Za-z\xc0-\xff])(?:tel|phone|fax|mobile|mob|cell|tlf|telf|t\xe9l|telefon|tel\xe9fono|telefono)\.?[ \t]*(?:no\.?|number|#)?[ \t]*[:.]?[ \t]*(?P<a>\+?\(?\d[\d ()\-/]{6,18}\d|\d{2,4}(?:\.\d{2,4}){2,4})(?![\d.,])"
+    r"|(?<![\w.,/-])(?P<b>\+[1-9]\d{0,2}(?:[ -]\(?|\()\d{1,4}\)?(?:[ .-]?\d{2,4}){2,4})(?![\w.,/-])"
     r"|(?<![\w.,/-])(?P<c>\(\d{3}\)[ ]?\d{3}[-.]\d{4}|\d{3}[-.]\d{3}[-.]\d{4})(?![\w.,/-]))")
 PROSE_ADDR = re.compile("(?<![A-Za-z0-9])(?P<city>(?:%s[ \t]+){0,2}%s),[ \t]+(?P<st>[A-Z]{2})[ \t]+(?P<zip>\\d{5}(?:-\\d{4})?)(?![A-Za-z0-9])" % (_CAPW, _CAPW))
 LEGAL_SUFFIX = re.compile(r"(?:Inc|Incorporated|LLC|L\.L\.C|Ltd|Limited|GmbH|AG|KG|Corp|Corporation|S\.A|SA|S\.L|SL|S\.r\.l|Srl|SRL|"
@@ -477,6 +479,8 @@ class Engine(object):
             lasts = last.split()
             c1 = cls(first)
             cl = [cls(x) for x in lasts]
+            if len(first) < 3 or len(lasts[0]) < 3 or not (first + lasts[0]).isascii() and sum(ch.isascii() for ch in first + lasts[0]) < 4:
+                continue
             if c1 == "S" or cl[0] == "S":
                 # "Drawn John Smith": try again without the leading generic word
                 if c1 == "S" and len(lasts) == 2 and cl[0] == "F" and cl[1] in ("N", "F", "L"):
@@ -504,6 +508,10 @@ class Engine(object):
         for m in PROSE_INITIAL.finditer(text):
             if cls(m.group("last")) == "N" and len(m.group("last")) >= 4:
                 span(m.start("last"), m.end("last"), "pdf-person", True)
+        for m in PROSE_DOTTED.finditer(text):
+            # "J.MOSKWA", "M.Littmann": initial and family name written together
+            if cls(m.group("last")) != "S":
+                span(m.start("last"), m.end("last"), "pdf-person", True)
         for m in PROSE_LABEL.finditer(text):
             toks = m.group("name").split()
             if toks and all(cls(t) in ("F", "N") for t in toks if len(t.strip(".")) > 1):
@@ -513,7 +521,7 @@ class Engine(object):
             if not toks:
                 continue
             classes = [cls(t) for t in toks]
-            if not any(len(t) >= 2 and t[0].isalpha() for t in toks):
+            if not any(len(t) >= 3 and t.isascii() and t[0].isalpha() for t in toks) or "\x00" in m.group("name"):
                 continue
             if any(c in ("N", "F") for c in classes):
                 span(m.start("name"), m.end("name"), "pdf-org", only=lambda t: cls(t) in ("N", "F", "L"))
@@ -521,7 +529,7 @@ class Engine(object):
                 span(m.start("name"), m.end("name"), "pdf-org")
         for m in PROSE_ORG_PREFIX.finditer(text):
             toks = m.group("name").split()
-            if cls(toks[0]) != "S" and toks[0][0].isupper():
+            if cls(toks[0]) != "S" and toks[0][0].isupper() and len(toks[0]) >= 3 and toks[0].isascii():
                 span(m.start("name"), m.end("name"), "pdf-org")
         for m in PROSE_COPYRIGHT.finditer(text):
             toks = [t for t in m.group("name").replace(",", " ").split()]
@@ -796,7 +804,16 @@ class Engine(object):
             return self.scrub(raw, ctx, False, kind).decode("latin-1")
         except UnicodeEncodeError:
             pass
-        # mixed scripts: work on the UTF-8 bytes (ASCII atoms keep their byte length)
+        # mixed scripts: characters outside Latin-1 are held aside (as NUL) while the
+        # rest is scrubbed, then put back at the same positions
+        held = [(i, c) for i, c in enumerate(value) if ord(c) > 255]
+        tmp = "".join(c if ord(c) < 256 else "\x00" for c in value)
+        out = self.scrub(tmp.encode("latin-1"), ctx, False, kind).decode("latin-1")
+        if len(out) == len(value):
+            chars = list(out)
+            for i, c in held:
+                chars[i] = c
+            return "".join(chars)
         raw = value.encode("utf-8")
         return self.scrub(raw, ctx, False, kind).decode("utf-8", "replace")
 
