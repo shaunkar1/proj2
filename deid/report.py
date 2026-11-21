@@ -108,18 +108,32 @@ def write_readme(adir, out_path):
     return out_path
 
 
+_PLACEHOLDER = re.compile(r"^(?:org|per|person|title|id|user|usuario|owner|author|name|company|pc|desktop|laptop|server|admin\w*|"
+                          r"operator|sysadmin|gebruiker|utilisateur|benutzer|default|guest|student|temp|test)\d*$")
+_PARTNO = re.compile(r"^\d{4,}[a-z]\d{2,}$|^\d+(?:mm|vac|vdc|cm|in|phi|x\d+.*)$|^[0-9a-f]{12,}$|^0x[0-9a-f]+$")
+
+
+_WIDGET = re.compile(r"view|button|page\d|print|select|carousel|scroll|click|toggle|layer\d")
+
+
 def promote(state):
     """Collect names seen in identity fields across finished attempts.
 
-    Distinctive names become corpus-wide entries; ordinary first names seen as an
-    account / author name become entries scoped to the repository they were seen in."""
-    from .identities import SOFTWARE, STOP, is_first_name, scope_of
-    kinds = ("user", "host", "email", "step-author", "step-org", "pdf-author", "ole-property", "xml-field",
-             "org", "step-person-org", "dxf-savedby", "iges-author", "iges-org", "png-author")
-    person_kinds = ("user", "email", "step-author", "pdf-author", "ole-property", "iges-author")
+    Distinctive account / author / machine names become corpus-wide entries; ordinary
+    first names seen as an account / author name become entries scoped to the repository
+    they were seen in.  Organisation fields are not promoted (they hold vendor and CAD
+    system names as often as owners); placeholders, part numbers and values that are
+    themselves pseudonyms are skipped."""
+    from . import pseudo
+    from .identities import SOFTWARE, STOP, VENDOR_DOMAINS, is_first_name, is_word, scope_of
+    kinds = ("user", "host", "email", "step-author", "pdf-author", "ole-property", "xml-field",
+             "dxf-savedby", "iges-author", "png-author", "ps-for")
+    person_kinds = ("user", "email", "step-author", "pdf-author", "ole-property", "iges-author", "xml-field")
+    vendor_words = set()
+    for d in VENDOR_DOMAINS:
+        vendor_words.update(ATOM_RE.findall(d.lower()))
     strong = collections.Counter()
     scoped = collections.defaultdict(set)
-    produced = set()
     recs = []
     for name in sorted(os.listdir(state)):
         adir = os.path.join(state, name)
@@ -133,15 +147,38 @@ def promote(state):
         for kind, value in rec.get("findings", []):
             if kind not in kinds:
                 continue
+            if kind == "email" and "@" in value:
+                value = value.split("@", 1)[0]          # the mailbox, not the provider
+            if "~" in value:
+                continue                                # 8.3 short names are handled per file
             for a in ATOM_RE.findall(value):
                 low = a.lower()
-                if low in STOP or low in SOFTWARE:
+                if low in STOP or low in SOFTWARE or low in vendor_words:
+                    continue
+                if _PLACEHOLDER.match(low) or _PARTNO.match(low) or low.isdigit():
                     continue
                 if strong_atom(low) and len(low) >= 5:
                     strong[low] += 1
                 elif kind in person_kinds and len(low) >= 4 and is_first_name(low):
                     scoped[scope].add(low)
-    out = {"strong": sorted(strong), "scoped": {k: sorted(v) for k, v in scoped.items()}}
+    try:
+        made = {pseudo.atom(a) for a in strong}
+    except Exception:
+        made = set()
+    # a term that names files in several unrelated collections is a part / material /
+    # vendor term, not somebody's account name
+    spread = collections.defaultdict(set)
+    mpath = os.path.join(state, "manifest.tsv")
+    if os.path.exists(mpath):
+        with open(mpath, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                path = line.split("\t", 1)[0]
+                sc = scope_of(path)
+                for a in ATOM_RE.findall(path.lower()):
+                    if a in strong and len(spread[a]) < 3:
+                        spread[a].add(sc)
+    keep = sorted(a for a in strong if a not in made and len(spread[a]) < 3 and not _WIDGET.search(a))
+    out = {"strong": keep, "scoped": {k: sorted(v) for k, v in scoped.items()}}
     with open(os.path.join(state, "discovered.json"), "w") as f:
         json.dump(out, f)
     return len(out["strong"]) + sum(len(v) for v in out["scoped"].values())

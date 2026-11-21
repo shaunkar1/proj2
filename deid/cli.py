@@ -62,6 +62,8 @@ def main(argv=None):
         print("uploaded %d code files and README.txt" % n)
         return 0
     if args.cmd == "promote":
+        from . import pseudo
+        pseudo.set_key(runner.load_key(args.state))
         n = report.promote(args.state)
         print("promoted %d names" % n)
         return 0
