@@ -393,7 +393,21 @@ def do_rar(path, data, engine, ctx, depth):
 
 # ---------------------------------------------------------------- native CAD
 def do_ole(path, data, engine, ctx):
+    zlb_done = []
+
     def sub(name, raw):
+        if name.endswith("__ZLB") and raw[:8] == sw.ZLB_SIG:
+            # pre-2015 SolidWorks: zlib-packed stream, rewritten at its original size
+            def inner(dec):
+                if dec[:6].lstrip(b"\x86")[:5] == b"<?xml":
+                    return engine.scrub(dec, ctx, False, "xml")
+                return engine.scrub(dec, ctx, True, "")
+            new = sw.zlb_stream(raw, inner)
+            if new is None:
+                if len(raw) > 32:
+                    ctx.notes.append("old SolidWorks packed stream kept as is: %s" % name)
+                return raw
+            return new
         buf = bytearray(raw)
         if name.startswith("\x05"):
             for a, b, wide in ole.property_fields(raw):

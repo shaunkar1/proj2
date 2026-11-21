@@ -93,6 +93,55 @@ def deflate_to_size(raw, target):
     return None
 
 
+def zlib_to_size(raw, target):
+    """zlib-wrap ``raw`` into exactly ``target`` bytes (2-byte header, deflate, Adler-32), or None."""
+    adler = struct.pack(">I", zlib.adler32(raw) & 0xFFFFFFFF)
+    best = None
+    for level, mem in ((9, 9), (9, 8), (6, 8), (1, 8)):
+        c = zlib.compressobj(level, zlib.DEFLATED, -15, mem)
+        fin = c.compress(raw) + c.flush()
+        if len(fin) == target - 6:
+            return b"\x78\x01" + fin + adler
+        c = zlib.compressobj(level, zlib.DEFLATED, -15, mem)
+        body = c.compress(raw) + c.flush(zlib.Z_SYNC_FLUSH)
+        pad = target - 6 - len(body)
+        if pad >= 2:
+            k, r = divmod(pad - 2, 5)
+            return b"\x78\x01" + body + _FILLER * k + _ENDINGS[2 + r] + adler
+        if len(fin) < target - 6 and (best is None or len(fin) < len(best)):
+            best = fin
+    if best is not None:
+        out = b"\x78\x01" + best + adler
+        return out + b"\x00" * (target - len(out))
+    return None
+
+
+ZLB_SIG = bytes.fromhex("231dd571da8148a2")
+
+
+def zlb_stream(raw, scrub):
+    """Old (OLE) SolidWorks '<name>__ZLB' stream: GUID(16) usize(4) csize(4) zlib data.
+    ``scrub(bytes) -> bytes`` of equal length.  Returns the stream at its original size."""
+    if len(raw) < 32 or raw[:8] != ZLB_SIG:
+        return None
+    us, cs = struct.unpack_from("<II", raw, 16)
+    if cs < 8 or 24 + cs > len(raw):
+        return None
+    try:
+        dec = zlib.decompress(raw[24:24 + cs])
+    except Exception:
+        return None
+    if len(dec) != us:
+        return None
+    new = scrub(dec)
+    if new == dec or len(new) != len(dec):
+        return raw
+    z = zlib_to_size(new, cs)
+    if z is None:
+        return None
+    return raw[:24] + z + raw[24 + cs:]
+
+
 def process(data, engine, ctx, sub):
     """De-identify a SolidWorks package in place.  ``sub(name, raw)`` -> new raw."""
     locs, cdir = parse(data)
