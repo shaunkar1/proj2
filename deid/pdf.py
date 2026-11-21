@@ -25,6 +25,7 @@ SKIP_KEYS = ("/ID", "/Registry", "/Ordering", "/CheckSum", "/Panose", "/CharSet"
 TEXT_OPS = ("Tj", "'", '"', "TJ")
 HAS_TEXT = re.compile(rb"(?:Tj|TJ|'|\")")
 LITERAL = re.compile(rb"\(((?:[^()\\]|\\.)*)\)")
+_HINT = re.compile(rb"@|:\\|[Uu]sers[\\/]|https?:|www\.")
 HEXSTR = re.compile(rb"<([0-9A-Fa-f\s]{2,})>")
 
 
@@ -411,7 +412,8 @@ def _content_stream(target, raw, engine, ctx, resources=None, pdf=None, fcache=N
             probes.append("".join(dec).encode("utf-8", "replace"))
         except Exception:
             pass
-    if all(engine.scrub(pr, ctx, False, "") == pr for pr in probes) and not any(engine.maybe(pr, ctx) for pr in probes[1::2]):
+    if (all(engine.scrub(pr, ctx, False, "") == pr for pr in probes)
+            and not any(engine.maybe(pr, ctx) or _HINT.search(pr) for pr in probes[1::2])):
         return None
     try:
         ops = pikepdf.parse_content_stream(stream)

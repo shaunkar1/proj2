@@ -47,7 +47,7 @@ onshape freecad opencascade open cascade occ occt kicad eeschema pcbnew blender 
 sketchup cadquery build123d openscad step iges stp igs sat acis spatial interop translation framework
 developer steptools tools st microsoft office word excel adobe acrobat distiller pdf postscript ghostscript
 inkscape sodipodi illustrator coreldraw corel libreoffice openoffice chrome zemax shx
-github gitlab bitbucket git lfs dropbox onedrive icloud drive switchdrive documents downloads
+github gitlab bitbucket git dropbox onedrive icloud drive switchdrive documents downloads
 linux ubuntu debian macos osx
 hoops publish techsoft pdfcreator pscript reportlab qt cairo skia quartz
 www http https com net org edu gov io dev app web cdn media static files assets public download downloads
