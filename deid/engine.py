@@ -671,16 +671,19 @@ class Engine(object):
             # candidates may overlap ("DTU MPP Magnus Kjer"): after a rejected one, look
             # again from its second word
             pos = 0
+            rejected_end = -1
             while True:
                 mm = PROSE_PERSON.search(text, pos)
                 if not mm:
                     return
                 took[0] = False
+                retry[0] = mm.start() < rejected_end       # overlaps a candidate just rejected
                 yield mm
                 if took[0]:
-                    pos, retry[0] = mm.end(), False
+                    pos = mm.end()
                 else:
-                    pos, retry[0] = mm.start() + len(mm.group("first")), True
+                    pos = mm.start() + len(mm.group("first"))
+                    rejected_end = max(rejected_end, mm.end())
 
         for m in persons():
             first, last = m.group("first"), m.group("last")
