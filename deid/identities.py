@@ -443,6 +443,52 @@ class Dictionary(object):
             if keep:
                 self.code_phrases[scope] = keep
 
+    def link_duplicates(self, rows, min_shared=3):
+        """Collections that hold copies of the same files (a curated set next to the
+        repository it was taken from, a fork next to its origin) share their names and
+        numbers, so a copy is rewritten exactly like its original.  ``rows`` are manifest
+        rows (path, size, md5, ...); two collections are linked when at least
+        ``min_shared`` files have identical content."""
+        by = {}
+        for r in rows:
+            if len(r) > 2 and r[2] and r[1] > 2000:
+                by.setdefault(r[2], set()).add(scope_of(r[0]))
+        pairs = {}
+        for scs in by.values():
+            if 1 < len(scs) <= 8:
+                for a in scs:
+                    for b in scs:
+                        if a != b:
+                            pairs[(a, b)] = pairs.get((a, b), 0) + 1
+        links = {}
+        for (a, b), c in pairs.items():
+            if c >= min_shared:
+                links.setdefault(a, set()).add(b)
+        self.links = {a: sorted(bs) for a, bs in links.items()}
+        for attr in ("scoped", "codes", "code_phrases", "auto"):
+            cur = getattr(self, attr, None)
+            if not cur:
+                continue
+            snap = {k: set(v) for k, v in cur.items()}
+            aslist = any(isinstance(v, list) for v in cur.values())
+            for a, bs in links.items():
+                merged = set(snap.get(a, ()))
+                for b in bs:
+                    merged |= snap.get(b, set())
+                if merged:
+                    cur[a] = sorted(merged) if aslist else merged
+        snap = {k: [tuple(x) for x in v] for k, v in self.scoped_phrases.items()}
+        for a, bs in links.items():
+            merged = list(snap.get(a, []))
+            seen = set(merged)
+            for b in bs:
+                for ph in snap.get(b, []):
+                    if ph not in seen:
+                        seen.add(ph)
+                        merged.append(ph)
+            if merged:
+                self.scoped_phrases[a] = [list(x) for x in merged]
+
     def add_repo_name(self, repo, scope):
         # Project names are replaced inside their own repository only: many repo
         # names are technical terms (nema17, esp32 ...) that must survive elsewhere.

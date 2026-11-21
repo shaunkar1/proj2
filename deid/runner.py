@@ -68,6 +68,8 @@ def build_dictionary(rows, state_dir):
             d.add_discovered(json.load(f))
     if os.environ.get("DEID_CODES", "1") != "0":
         d.add_codes(paths)
+    if os.environ.get("DEID_LINKS", "1") != "0":
+        d.link_duplicates(rows)
     d.mark_word_parts()
     return d
 
