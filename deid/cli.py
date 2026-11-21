@@ -29,7 +29,7 @@ def main(argv=None):
     r = sub.add_parser("run", help="stream: download, de-identify, upload")
     common(r)
     r.add_argument("--base", default="https://machina-input.joinbuilders.org")
-    r.add_argument("--workers", type=int, default=20)
+    r.add_argument("--workers", type=int, default=40)
     r.add_argument("--big-workers", type=int, default=2)
     r.add_argument("--limit", type=int, default=0)
     r.add_argument("--sample", type=int, default=0, help="process N files spread over the manifest")

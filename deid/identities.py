@@ -64,7 +64,8 @@ solidworks sldworks swstep dassault systemes catia delmia enovia autodesk autoca
 siemens unigraphics ugs solidedge parasolid ptc creo parametric onshape freecad opencascade cascade kicad
 eeschema pcbnew blender rhino rhinoceros mcneel sketchup cadquery build123d openscad steptools spatial
 microsoft adobe acrobat distiller ghostscript inkscape sodipodi illustrator coreldraw libreoffice openoffice
-hoops techsoft pdfcreator pscript reportlab zemax matplotlib cairo
+hoops techsoft pdfcreator pscript reportlab zemax matplotlib cairo zwcad zwsoft sdrc ideas ezdxf
+draftsight bricscad librecad qcad nanocad tinkercad shapr3d alibre ironcad turbocad vectorworks
 """.split())
 
 # Hosts whose names are format / tooling references, not corpus identities.
@@ -267,11 +268,19 @@ class Dictionary(object):
                 if sum(len(a) for a in lows) >= 6 and not all(a in STOP for a in lows):
                     self.phrases["-".join(lows)] = lows
 
-    def add_discovered(self, atoms):
-        for a in atoms:
+    def add_discovered(self, obj):
+        """Names promoted from identity fields seen in earlier runs (see report.promote)."""
+        if isinstance(obj, list):
+            obj = {"strong": obj, "scoped": {}}
+        for a in obj.get("strong", []):
             a = a.lower()
-            if strong_atom(a) and len(a) >= 5:
+            if strong_atom(a) and len(a) >= 5 and a not in SOFTWARE:
                 self.strong.add(a)
+        for scope, atoms in obj.get("scoped", {}).items():
+            for a in atoms:
+                a = a.lower()
+                if a not in STOP and len(a) >= 4:
+                    self.scoped.setdefault(scope, set()).add(a)
 
     # -- persistence (private mapping; never uploaded) ----------------
     def to_json(self):

@@ -109,21 +109,39 @@ def write_readme(adir, out_path):
 
 
 def promote(state):
-    """Collect distinctive names seen in identity fields across finished attempts."""
-    seen = collections.Counter()
+    """Collect names seen in identity fields across finished attempts.
+
+    Distinctive names become corpus-wide entries; ordinary first names seen as an
+    account / author name become entries scoped to the repository they were seen in."""
+    from .identities import SOFTWARE, STOP, is_first_name, scope_of
+    kinds = ("user", "host", "email", "step-author", "step-org", "pdf-author", "ole-property", "xml-field",
+             "org", "step-person-org", "dxf-savedby", "iges-author", "iges-org", "png-author")
+    person_kinds = ("user", "email", "step-author", "pdf-author", "ole-property", "iges-author")
+    strong = collections.Counter()
+    scoped = collections.defaultdict(set)
+    produced = set()
+    recs = []
     for name in sorted(os.listdir(state)):
         adir = os.path.join(state, name)
-        if not (name.startswith("attempt-") and os.path.isdir(adir)):
+        if not (name.startswith("attempt-") and os.path.isdir(adir)) or "trial" in name:
             continue
         for rec in _records(adir):
-            for kind, value in rec.get("findings", []):
-                if kind in ("user", "host", "email", "step-author", "step-org", "pdf-author", "ole-property",
-                            "xml-field", "org", "step-person-org", "dxf-savedby"):
-                    for a in ATOM_RE.findall(value):
-                        low = a.lower()
-                        if strong_atom(low) and len(low) >= 5:
-                            seen[low] += 1
-    names = sorted(seen)
+            if rec.get("ok") and rec.get("findings"):
+                recs.append(rec)
+    for rec in recs:
+        scope = scope_of(rec["path"])
+        for kind, value in rec.get("findings", []):
+            if kind not in kinds:
+                continue
+            for a in ATOM_RE.findall(value):
+                low = a.lower()
+                if low in STOP or low in SOFTWARE:
+                    continue
+                if strong_atom(low) and len(low) >= 5:
+                    strong[low] += 1
+                elif kind in person_kinds and len(low) >= 4 and is_first_name(low):
+                    scoped[scope].add(low)
+    out = {"strong": sorted(strong), "scoped": {k: sorted(v) for k, v in scoped.items()}}
     with open(os.path.join(state, "discovered.json"), "w") as f:
-        json.dump(names, f)
-    return len(names)
+        json.dump(out, f)
+    return len(out["strong"]) + sum(len(v) for v in out["scoped"].values())

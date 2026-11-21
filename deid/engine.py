@@ -29,6 +29,7 @@ OVERLAP = 4096
 
 USER_STOP = set("""public default shared user users admin administrator guest owner pc home desktop
 student usuario utilisateur benutzer root ubuntu runner travis vsts circleci jenkins builder build
+admini defaul operator sysadmin workeradm
 all appdata programdata local temp tmp me username name your yourname youruser xxx www-data vagrant
 docker app worker ci git node pi debian ec2-user opc azureuser lenovo dell hp asus acer msi""".split())
 USER_STOP_PHRASES = {"all users", "default user", "your name", "user name"}
@@ -37,7 +38,12 @@ FIELD_STOP = {
     "unspecified", "not specified", "undefined", "null", "nil", "empty", "tbd", "xxx", "name",
     "your name", "company", "organization", "organisation", "open cascade", "$", "?", "*", "..",
     "design", "approved", "checked", "drawn", "company name", "author name", "not applicable",
+    "yes", "no", "it", "a company", "an author", "my company", "my organization", "unknown authorisation",
+    "unknown organization", "unknown author", "china", "1", "u", "x", "me", "pc", "user1", "sysadmin",
 }
+GENERIC_FIELD_WORDS = set("""organization organisation description person first last middle name id company
+department title unknown unspecified default author creator owner user admin the of and for by a an my your
+project division group team office it engineering design not applicable none""".split())
 FILE_EXT = set("""png jpg jpeg gif svg pdf step stp stl obj iges igs sat sldprt sldasm slddrw ipt iam idw dwg dxf
 fcstd prt asm drw txt xml json html htm css js py md zip gz tar rar bmp tif tiff ico webp wrl x_t x_b""".split())
 
@@ -47,6 +53,7 @@ WINPATH = re.compile(
     r'(?P<name>[^\\/:*?"<>|\r\n\t\x00]{1,48}?)[\\/]')
 NIXPATH = re.compile(r'(?:(?<![A-Za-z0-9._~%-])|^)/(?:Users|home)/(?P<name>[^\\/:*?"<>|\r\n\t\x00 ]{1,48}?)/')
 UNCHOST = re.compile(r'(?<![\\A-Za-z0-9:])\\\\(?P<host>[A-Za-z0-9][A-Za-z0-9_-]{2,40})\\[A-Za-z0-9$ _.-]{1,60}\\')
+HOSTNAME = re.compile(r"(?i)\b(?:hostname|host name|computer ?name|machine ?name)\s*[:=]\s*['\"]?(?P<host>[A-Za-z0-9][A-Za-z0-9._-]{2,40})")
 CLOUDORG = re.compile(r'(?i)(?:OneDrive - (?P<a>[^\\/\r\n"<>|]{2,60}?)|Dropbox \((?P<b>[^)\\/\r\n]{2,60})\))(?=[\\/])')
 TLDS = set("""com org net edu gov mil int io co ac de uk fr jp cn it es nl ch at se no dk fi be pl cz ru br mx
 ca au nz in kr tw sg hk us eu info biz me tech dev app xyz science studio global engineering ir tr gr pt hu ro
@@ -55,7 +62,7 @@ online site store shop cloud ai design tools systems solutions email works world
 EMAIL = re.compile(r'(?<![A-Za-z0-9._%+-])(?P<local>[A-Za-z0-9][A-Za-z0-9._%+-]{0,63})@'
                    r'(?P<dom>(?:[A-Za-z0-9-]+\.)+(?P<tld>[A-Za-z]{2,24}))(?![A-Za-z0-9-])')
 STEP_FILE_NAME = re.compile(r'FILE_NAME\s*\(')
-STEP_PERSON_ORG = re.compile(r'=\s*(?:PERSON|ORGANIZATION|ADDRESS|PERSONAL_ADDRESS|ORGANIZATIONAL_ADDRESS)\s*\(')
+STEP_PERSON_ORG = re.compile(r'=\s*(PERSON|ORGANIZATION|ADDRESS|PERSONAL_ADDRESS|ORGANIZATIONAL_ADDRESS)\s*\(')
 XML_FIELDS = [
     re.compile(r'(?is)<(?P<tag>dc:creator|dc:publisher|dc:contributor|dc:rights|dc:lastModifiedBy|cp:lastModifiedBy|'
                r'pdf:Author|xmp:Author|xap:Author|photoshop:AuthorsPosition|photoshop:Credit|Company|Manager|'
@@ -239,6 +246,8 @@ class Engine(object):
             low = name.strip().lower()
             if not low or low in USER_STOP or low in USER_STOP_PHRASES:
                 return False
+            if "~" in low and low.split("~")[0] in USER_STOP:
+                return False
             atoms = [a.lower() for a in ATOM_RE.findall(name)]
             if atoms and all(a in ctx.produced or a in STOP for a in atoms):
                 return False
@@ -266,8 +275,18 @@ class Engine(object):
             if host.lower() not in STOP and not is_word(host.lower()):
                 unit_spans.append(m.span("host"))
                 ctx.found("host", host)
+        for m in HOSTNAME.finditer(text):
+            host = m.group("host")
+            hat = [x.lower() for x in ATOM_RE.findall(host)]
+            if hat and not all(x in ctx.produced or x in STOP for x in hat) and host.lower() not in ("localhost", "unknown"):
+                unit_spans.append(m.span("host"))
+                ctx.found("host", host)
+                self._learn(host, ctx)
         for m in CLOUDORG.finditer(text):
             g = "a" if m.group("a") else "b"
+            org_atoms = [x.lower() for x in ATOM_RE.findall(m.group(g))]
+            if org_atoms and all(x in ctx.produced or x in STOP for x in org_atoms):
+                continue
             if m.group(g).strip().lower() not in ("personal", "business", "work", "school", "team"):
                 unit_spans.append(m.span(g))
                 ctx.found("org", m.group(g))
@@ -277,6 +296,9 @@ class Engine(object):
             if m.group("tld").lower() not in TLDS or any(dom == v or dom.endswith("." + v) for v in VENDOR_DOMAINS):
                 continue
             if not any(c.isalpha() for c in m.group("local")):
+                continue
+            mail_atoms = [x.lower() for x in ATOM_RE.findall(m.group("local") + " " + dom.rsplit(".", 1)[0])]
+            if all(x in ctx.produced or x in STOP for x in mail_atoms):
                 continue
             unit_spans.append(m.span("local"))
             ds, de = m.span("dom")
@@ -295,7 +317,10 @@ class Engine(object):
                             self._field(text, a, b, unit_spans, ctx, "step-author" if idx == 2 else "step-org")
             for m in STEP_PERSON_ORG.finditer(text):
                 args = _step_args(text[m.end():m.end() + 2000], 0)
-                for arg in args:
+                ent = m.group(1)
+                # PERSON(id, last, first, middle, prefix, suffix); ORGANIZATION(id, name, description)
+                pick = args[1:] if ent == "PERSON" else args[1:2] if ent == "ORGANIZATION" else args
+                for arg in pick:
                     for (a, b) in arg:
                         self._field(text, m.end() + a, m.end() + b, unit_spans, ctx, "step-person-org")
         if is_xml:
@@ -322,6 +347,8 @@ class Engine(object):
             return
         atoms = [x.lower() for x in ATOM_RE.findall(value)]
         if not any(x not in STOP for x in atoms) or any(x in SOFTWARE for x in atoms):
+            return
+        if all(x in GENERIC_FIELD_WORDS or x in STOP or x.isdigit() for x in atoms) or value.lstrip().lower().startswith(("http://", "https://")):
             return
         if all(x in ctx.produced or x in STOP for x in atoms):
             return  # already pseudonymised by an earlier pass over this file
@@ -527,8 +554,8 @@ class Engine(object):
 
 _IDLIKE = re.compile(r"^(?:id|no|nr|ref|#)?[\s_#.-]*\d{1,6}$")
 _ASCII_RUN = re.compile(rb"[\x20-\x7e]{6,}")
-_INTERESTING = re.compile(rb"[\\/@<]")
-_INTERESTING_W = re.compile(rb"[\\/@<]\x00")
+_INTERESTING = re.compile(rb"[\\/@<]|[Hh]ost|[Nn]ame\s*[:=]")
+_INTERESTING_W = re.compile(rb"[\\/@<]\x00|[Hh]\x00o\x00s\x00t\x00")
 _U16_RUN = re.compile(rb"(?:[\x20-\x7e]\x00){4,}")
 _ATOM_B = re.compile(rb"[A-Za-z0-9]+")
 _ATOM_W = re.compile(rb"(?:[A-Za-z0-9]\x00)+")
