@@ -56,7 +56,7 @@ def _init(state):
 
 
 def _one(job):
-    idx, root, path, outdir, want_text = job
+    idx, root, path, outdir, want_text, save = job
     from deid import handlers
     from deid.engine import Ctx
     from deid.identities import STOP, is_word, scope_of
@@ -73,6 +73,10 @@ def _one(job):
         rec.update(out=len(out), changed=out != data, hits=ctx.hits, notes=ctx.notes[:6],
                    findings=ctx.findings[:80], secs=round(time.time() - t0, 2),
                    out_path=handlers.rename_path(_G["engine"], ctx, path))
+        if save:
+            for sub, blob in (("orig", data), ("out", out)):
+                with open(os.path.join(outdir, sub, "%05d.pdf" % idx), "wb") as f:
+                    f.write(blob)
         if want_text and len(data) < 25e6:
             a = _text(data)
             b = _text(out) if out != data else a
@@ -111,9 +115,10 @@ def main():
     ap.add_argument("--input", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--limit", type=int, default=0)
-    ap.add_argument("--jobs", type=int, default=10)
+    ap.add_argument("--jobs", type=int, default=6)
     ap.add_argument("--ext", default=".pdf")
     ap.add_argument("--no-text", action="store_true")
+    ap.add_argument("--save-every", type=int, default=0, help="keep the original and the output of every Nth file")
     a = ap.parse_args()
     exts = tuple(a.ext.lower().split(","))
     files = []
@@ -126,7 +131,10 @@ def main():
         step = len(files) / float(a.limit)
         files = [files[int(i * step)] for i in range(a.limit)]
     os.makedirs(os.path.join(a.out, "text"), exist_ok=True)
-    jobs = [(i, a.input, p, a.out, not a.no_text) for i, p in enumerate(files)]
+    for sub in ("orig", "out"):
+        os.makedirs(os.path.join(a.out, sub), exist_ok=True)
+    jobs = [(i, a.input, p, a.out, not a.no_text, bool(a.save_every) and i % a.save_every == 0 and os.path.getsize(os.path.join(a.input, p)) < 3e6)
+            for i, p in enumerate(files)]
     t0 = time.time()
     n = 0
     with multiprocessing.get_context("spawn").Pool(a.jobs, initializer=_init, initargs=(a.state,), maxtasksperchild=200) as pool, \

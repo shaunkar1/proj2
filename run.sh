@@ -48,7 +48,7 @@ cd code || exit 1
 export PYTHONUNBUFFERED=1
 if [ ! -f "../state/go-$ATTEMPT" ]; then
   echo "=== trial: 120 files, saved locally only" | tee -a "../$LOG"
-  ../.venv/bin/python -m deid.cli run --attempt "trial-$ATTEMPT" --state ../state --dry "../state/dryout-$ATTEMPT" \
+  ../.venv/bin/python -m deid.cli run --attempt "trial-$ATTEMPT" --state ../state --dry "../state/dryout-$ATTEMPT.noindex" \
       --sample 120 2>&1 | tee -a "../$LOG"
   echo "=== trial done $(date +%H:%M:%S); waiting for state/go-$ATTEMPT (continues by itself after 20 min)" | tee -a "../$LOG"
   for i in $(seq 1 240); do [ -f "../state/go-$ATTEMPT" ] && break; sleep 5; done
