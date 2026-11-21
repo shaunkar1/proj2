@@ -104,7 +104,7 @@ def process(data, engine, ctx, sub):
     order = sorted(locs, key=lambda r: (0 if r["name"].startswith(("docProps/", "swXmlContents/", "_MO_")) else 1))
     for rec in order:
         name = rec["name"]
-        if name.startswith(SKIP_STREAMS) or rec["us"] == 0:
+        if rec["us"] == 0:
             continue
         new = sub(name, rec["raw"])
         if new is None or new == rec["raw"]:

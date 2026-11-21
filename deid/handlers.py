@@ -417,12 +417,77 @@ def do_ole(path, data, engine, ctx):
     return engine.scrub(out, ctx, True, "")
 
 
+DRAWING_EXT = (".slddrw", ".slddrt", ".drwdot")
+
+
+def _png_chunk(typ, body):
+    return struct.pack(">I", len(body)) + typ + body + struct.pack(">I", zlib.crc32(typ + body) & 0xFFFFFFFF)
+
+
+def blank_png_like(raw):
+    """A plain light-grey PNG with the same pixel size and the same byte length as ``raw``."""
+    if raw[:8] != b"\x89PNG\r\n\x1a\n" or raw[12:16] != b"IHDR":
+        return None
+    w, h = struct.unpack(">II", raw[16:24])
+    if not (0 < w <= 8192 and 0 < h <= 8192):
+        return None
+    row = b"\x00" + b"\xf2" * w                       # 8-bit greyscale, filter 0
+    idat = zlib.compress(row * h, 9)
+    base = (b"\x89PNG\r\n\x1a\n" + _png_chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 0, 0, 0, 0))
+            + _png_chunk(b"IDAT", idat))
+    end = _png_chunk(b"IEND", b"")
+    pad = len(raw) - len(base) - len(end)
+    if pad == 0:
+        return base + end
+    if pad < 12:
+        return None
+    return base + _png_chunk(b"prVw", b"\x00" * (pad - 12)) + end
+
+
+def blank_dib(raw):
+    """Whiten a SolidWorks 'Preview' stream (4-byte prefix + DIB) without changing its size."""
+    if len(raw) < 48:
+        return None
+    off = 4 if struct.unpack_from("<I", raw, 4)[0] == 40 else 0 if struct.unpack_from("<I", raw, 0)[0] == 40 else -1
+    if off < 0:
+        return None
+    w, h, planes, bits, comp, size_image, _, _, used, _ = struct.unpack_from("<iiHHIIiiII", raw, off + 4)
+    out = bytearray(raw)
+    pal = off + 40
+    if bits <= 8:
+        n = used or (1 << bits)
+        if pal + 4 * n > len(raw):
+            return None
+        for i in range(n):
+            out[pal + 4 * i:pal + 4 * i + 4] = b"\xf2\xf2\xf2\x00"
+        return bytes(out)
+    if comp == 0:
+        out[pal:] = b"\xf2" * (len(raw) - pal)
+        return bytes(out)
+    return None
+
+
 def do_sw(path, data, engine, ctx):
+    drawing = ext_of(path) in DRAWING_EXT
+
     def sub(name, raw):
+        if drawing and (name == "PreviewPNG" or name.startswith("Images/")):
+            # a drawing's preview is a picture of the sheet, title block included
+            new = blank_png_like(raw)
+            if new is not None:
+                ctx.hits += 1
+                return new
+            return raw
+        if drawing and name == "Preview":
+            new = blank_dib(raw)
+            if new is not None:
+                ctx.hits += 1
+                return new
+            return raw
+        if name in ("PreviewPNG", "Preview") or name.startswith("Images/"):
+            return raw
         if raw[:5] == b"<?xml" or (name.endswith(".xml") or name.endswith(".rels")):
             return engine.scrub(raw, ctx, False, "xml")
-        if raw[:2] == b"\xff\xfe" and raw[2:6] == b"<\x00?\x00":
-            return engine.scrub(raw, ctx, True, "")
         return engine.scrub(raw, ctx, True, "")
     out = sw.process(data, engine, ctx, sub)
     if out is None:

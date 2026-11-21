@@ -276,10 +276,19 @@ def _task(row):
             if hasattr(signal, "SIGALRM"):
                 signal.alarm(0)
         new_path = handlers.rename_path(engine, ctx, path)
+        # self-check: distinctive names found in this file that are still readable in the
+        # raw output (plain or UTF-16).  Logged privately to steer later improvements.
+        residual = []
+        if len(out) < 64 * 1024 * 1024 and ctx.local_wide:
+            low = out.lower()
+            for name in sorted(ctx.local_wide)[:40]:
+                nb = name.encode("latin-1", "replace")
+                if nb in low or b"\x00".join(bytes([c]) for c in nb) in low:
+                    residual.append(name)
         t2 = time.time()
         _upload(_W["cfg"]["prefix"] + "corpus/" + new_path, out)
         rec.update(ok=True, out_path=new_path, out=len(out), md5=hashlib.md5(out).hexdigest(),
-                   changed=out != data, hits=ctx.hits, notes=ctx.notes[:8],
+                   changed=out != data, hits=ctx.hits, notes=ctx.notes[:8], residual=residual[:10],
                    findings=sorted(set(ctx.findings))[:40],
                    t=[round(t1 - t0, 2), round(t2 - t1, 2), round(time.time() - t2, 2)])
     except Exception as exc:
