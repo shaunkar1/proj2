@@ -11,6 +11,7 @@ import json
 import multiprocessing
 import os
 import random
+import re
 import signal
 import sys
 import threading
@@ -252,6 +253,45 @@ def _copy_with(_W, cfg, src_key, dst_key):
     return False
 
 
+_NAME_TOK = re.compile(r"[A-Za-z0-9]+")
+_NAME_ATOM = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
+
+
+def _ident_name(orig, earlier, keep):
+    """Earlier output name with every change below the first ``keep`` folders undone, except
+    where the changed word belongs to the name of the source folder itself (owner, project)."""
+    from .identities import is_word
+    ko, vo = orig.split("/"), earlier.split("/")
+    if len(ko) != len(vo):
+        return "/".join(vo[:keep] + ko[keep:])
+    atoms = set()
+    for comp in ko[max(0, keep - 1):keep]:
+        for run in _NAME_TOK.findall(comp):
+            atoms.add(run.lower())
+            for a in _NAME_ATOM.findall(run):
+                atoms.add(a.lower())
+        for part in re.split(r"__|[\s._-]+", comp):
+            flat = "".join(_NAME_TOK.findall(part)).lower()
+            if flat:
+                atoms.add(flat)
+    atoms = set(a for a in atoms if len(a) >= 4 and not a.isdigit() and not is_word(a))
+    out = vo[:keep]
+    for co, cv in zip(ko[keep:], vo[keep:]):
+        if co == cv or len(co) != len(cv):
+            out.append(co)
+            continue
+        buf = list(co)
+        for m in _NAME_TOK.finditer(co):
+            s, e = m.span()
+            if co[s:e] == cv[s:e]:
+                continue
+            low = co[s:e].lower()
+            if low in atoms or any(a in low for a in atoms if len(a) >= 5):
+                buf[s:e] = cv[s:e]
+        out.append("".join(buf))
+    return "/".join(out)
+
+
 def _copy_phase(rows, cfg, record, stop_file, nthreads=48):
     """Copy the unchanged files of an incremental attempt with many light threads (the
     requests carry no data).  Returns the rows that could not be copied."""
@@ -479,7 +519,9 @@ def run(args):
             # only the first ``keep`` folders of the earlier name are used (the pseudonymised
             # source folder); everything below keeps its original name, so the file sits where
             # a reader of the original tree expects it
-            names = {k: "/".join(v.split("/")[:keep] + k.split("/")[keep:]) for k, v in names.items()}
+            ident = getattr(args, "names_mode", "") == "ident"
+            names = {k: (_ident_name(k, v, keep) if ident else "/".join(v.split("/")[:keep] + k.split("/")[keep:]))
+                     for k, v in names.items()}
         cfg["names"] = os.path.join(adir, "names.json")
         with open(cfg["names"], "w") as f:
             json.dump(names, f)
