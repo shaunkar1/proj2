@@ -1189,7 +1189,9 @@ def _fileref_w(data, e):
     if len(tail) % 2:
         tail = tail[:-1]
     try:
-        t = tail.decode("utf-16-le", "ignore").encode("latin-1", "ignore")
+        # characters outside Latin-1 (binary data after the name) end the name: they must
+        # not be dropped, or the bytes after them would read as part of it
+        t = tail.decode("utf-16-le", "replace").encode("latin-1", "replace")
     except Exception:
         return False
     return _FILEREF.match(t) is not None
