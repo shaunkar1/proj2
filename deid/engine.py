@@ -425,7 +425,9 @@ class Engine(object):
                 return False
         elif entry.kind in ("K", "D", "Q") and self.code_mode == "text" and (ctx.in_name or not ctx.numbers_ok):
             return False      # experiment: numbers replaced in document text only
-        if entry.kind == "D" or (entry.kind == "Q" and not any(c.isalpha() for a in entry.atoms for c in a)):
+        if entry.kind == "D" or (entry.kind == "Q" and (e - s) < (18 if entry.wide else 9)
+                                 and not any(c.isalpha() for a in entry.atoms for c in a)):
+            # (a long multi-part number such as 01-118-00-0 is distinctive enough anywhere)
             # an all-digit part number: only in names, drawing text and references to
             # files - never in free numeric data
             if entry.wide:
