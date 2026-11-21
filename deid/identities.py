@@ -68,6 +68,12 @@ hoops techsoft pdfcreator pscript reportlab zemax matplotlib cairo zwcad zwsoft 
 draftsight bricscad librecad qcad nanocad tinkercad shapr3d alibre ironcad turbocad vectorworks
 """.split())
 
+GENERIC_REPO = set("""cad files file hardware models model parts part design designs drawings drawing projects
+project mechanical mechanics public library libraries docs solidworks freecad step stl resources assets
+3d printed printing printer print open source opensource robot robotics machine machines kit kits build
+main master repo repository practice portfolio collection data dataset examples tutorial tutorials course
+engineering dev development test tests misc stuff things work my the of and for with a an to in on""".split())
+
 # Hosts whose names are format / tooling references, not corpus identities.
 VENDOR_DOMAINS = (
     "w3.org", "adobe.com", "purl.org", "autodesk.com", "solidworks.com", "3ds.com", "ptc.com",
@@ -98,6 +104,7 @@ openhardware mechatronics nebomusic fingers-welt sariasan mobasi chengtudasai di
 wto-tools crane-x7 parol6 keychron antmicro sciurus17 rt-net rtnet
 southampton stuttgart ljubljana aachen delft aarhus kanpur hamburg
 mcmaster-carr mcmaster edmund-optics misumi-ec banggood adafruit sparkfun pololu
+aligo awi bam unh throwbot liotech powercube6 loong qingloong openloong janelia irnas
 """.split()
 
 CURATED_PHRASES = [
@@ -177,6 +184,7 @@ class Dictionary(object):
         self.strong = set()      # lower-case atoms replaced everywhere
         self.phrases = {}        # canonical lower-case phrase -> list of atoms
         self.scoped = {}         # scope -> set(lower-case atoms)
+        self.scoped_phrases = {}  # scope -> list of atom lists (project names made of ordinary words)
 
     # -- construction -------------------------------------------------
     def add_name(self, name, scope=None, force_scoped=False):
@@ -226,6 +234,10 @@ class Dictionary(object):
         for a in lows:
             if a not in STOP and len(a) >= 4 and not a.isdigit() and not is_word(a):
                 self.scoped.setdefault(scope, set()).add(a)
+        # a multi-word project name ("open-source-rover") is replaced as a whole phrase,
+        # inside its own repository only, unless it is purely generic ("cad-files")
+        if len(lows) >= 2 and sum(len(a) for a in lows) >= 8 and not all(a in GENERIC_REPO or a in STOP or a.isdigit() for a in lows):
+            self.scoped_phrases.setdefault(scope, []).append(lows)
 
     def add_curated(self):
         for tok in CURATED_STRONG:
@@ -285,7 +297,8 @@ class Dictionary(object):
     # -- persistence (private mapping; never uploaded) ----------------
     def to_json(self):
         return {"strong": sorted(self.strong), "phrases": self.phrases,
-                "scoped": {k: sorted(v) for k, v in self.scoped.items()}}
+                "scoped": {k: sorted(v) for k, v in self.scoped.items()},
+                "scoped_phrases": self.scoped_phrases}
 
     @classmethod
     def from_json(cls, obj):
@@ -293,6 +306,7 @@ class Dictionary(object):
         d.strong = set(obj.get("strong", []))
         d.phrases = dict(obj.get("phrases", {}))
         d.scoped = {k: set(v) for k, v in obj.get("scoped", {}).items()}
+        d.scoped_phrases = dict(obj.get("scoped_phrases", {}))
         return d
 
     def save(self, path):

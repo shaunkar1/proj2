@@ -128,6 +128,13 @@ class Engine(object):
                 v = sep.join(atoms)
                 add(v, _Entry("P", atoms, True, None, False))
                 add(_u16(v), _Entry("P", atoms, True, None, True))
+        for scope, plist in getattr(dictionary, "scoped_phrases", {}).items():
+            for atoms in plist:
+                atoms = list(atoms)
+                for sep in PHRASE_SEPS:
+                    v = sep.join(atoms)
+                    add(v, _Entry("P", atoms, True, frozenset([scope]), False))
+                    add(_u16(v), _Entry("P", atoms, True, frozenset([scope]), True))
         scoped = {}
         for scope, atoms in dictionary.scoped.items():
             for a in atoms:
