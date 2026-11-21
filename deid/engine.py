@@ -164,6 +164,7 @@ class Ctx(object):
         self.produced = set()     # pseudonyms already written (never replaced again)
         self.findings = []        # (kind, value)
         self._seen = set()
+        self.numbers_ok = False   # all-digit part numbers may be replaced (names, drawing text)
         self.digit_spans = []     # phone numbers / postcodes found in the text being scrubbed
         self.notes = []
         self.hits = 0
@@ -226,6 +227,17 @@ class Engine(object):
                 continue
             add(a, _Entry("C", None, True, frozenset(scopes), False))
             add(_u16(a), _Entry("C", None, True, frozenset(scopes), True))
+        # part / document numbers of each collection (see identities.add_codes)
+        codes = {}
+        for scope, atoms in getattr(dictionary, "codes", {}).items():
+            for a in atoms:
+                codes.setdefault(a, set()).add(scope)
+        for a, scopes in codes.items():
+            if a in dictionary.strong or a in scoped:
+                continue
+            kind = "D" if a.isdigit() else "K"
+            add(a, _Entry(kind, None, True, frozenset(scopes), False))
+            add(_u16(a), _Entry(kind, None, True, frozenset(scopes), True))
         self._pats = pats
         # distinctive names that are also matched inside longer words: a longer word that
         # is replaced as a whole keeps the same pseudonym for that part (see token())
@@ -318,6 +330,19 @@ class Engine(object):
         n = len(data)
         if entry.scopes is not None and ctx.scope not in entry.scopes:
             return False
+        if entry.kind == "D":
+            # an all-digit part number: only in names, drawing text and references to
+            # files - never in free numeric data
+            if entry.wide:
+                if not _fileref_w(data, e):
+                    return False
+            else:
+                if s > 1 and data[s - 1] in b".," and 0x30 <= data[s - 2] <= 0x39:
+                    return False
+                if e + 1 < n and data[e] in b".," and 0x30 <= data[e + 1] <= 0x39:
+                    return False
+                if not (ctx.numbers_ok or _fileref(data, e)):
+                    return False
         if entry.wide:
             if entry.bounded:
                 if s >= 2 and data[s - 1] == 0 and data[s - 2] in ALNUM:
@@ -847,7 +872,11 @@ class Engine(object):
     def rename(self, value, ctx):
         """Apply corpus-wide identities only (file and folder names, archive members)."""
         raw = value.encode("utf-8")
-        plan = self._global_plan(raw, ctx, False)
+        keep, ctx.numbers_ok = ctx.numbers_ok, True
+        try:
+            plan = self._global_plan(raw, ctx, False)
+        finally:
+            ctx.numbers_ok = keep
         if not plan:
             return value
         out = bytearray(raw)
@@ -922,6 +951,27 @@ _INTERESTING_W = re.compile(rb"[\\/@<]\x00|[Hh]\x00o\x00s\x00t\x00")
 _U16_RUN = re.compile(rb"(?:[\x20-\x7e]\x00){4,}")
 _ATOM_B = re.compile(rb"[A-Za-z0-9]+")
 _ATOM_W = re.compile(rb"(?:[A-Za-z0-9]\x00)+")
+
+
+_FILEREF = re.compile(rb"^(?:[A-Za-z0-9_\-.()+&'#~\[\]]| (?! ))){0,48}?\.(?:sldprt|sldasm|slddrw|ipt|iam|idw|ipn|step|stp|stl|pdf|dwg|dxf|"
+                      rb"igs|iges|x_t|x_b|sat|par|asm|psm|dft|prt|drw|catpart|catproduct|catdrawing|f3d|fcstd|3mf|obj|easm|eprt|"
+                      rb"edrw|png|jpg|jpeg|zip)(?![A-Za-z0-9])", re.I)
+
+
+def _fileref(data, e):
+    """True if the bytes after position ``e`` complete a file name (…​.SLDPRT, …​.pdf)."""
+    return _FILEREF.match(data[e:e + 90]) is not None
+
+
+def _fileref_w(data, e):
+    tail = data[e:e + 180]
+    if len(tail) % 2:
+        tail = tail[:-1]
+    try:
+        t = tail.decode("utf-16-le", "ignore").encode("latin-1", "ignore")
+    except Exception:
+        return False
+    return _FILEREF.match(t) is not None
 
 
 def _texty(data, s, e, need=12):

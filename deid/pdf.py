@@ -30,6 +30,14 @@ HEXSTR = re.compile(rb"<([0-9A-Fa-f\s]{2,})>")
 
 
 def process(path, data, engine, ctx, depth):
+    keep = ctx.numbers_ok
+    try:
+        return _process_file(path, data, engine, ctx, depth)
+    finally:
+        ctx.numbers_ok = keep
+
+
+def _process_file(path, data, engine, ctx, depth):
     if pikepdf is None:
         ctx.notes.append("pikepdf missing: PDF handled by raw pass only")
         return engine.scrub(data, ctx, True, "")
@@ -39,7 +47,11 @@ def process(path, data, engine, ctx, depth):
         ctx.notes.append("PDF could not be parsed (%s); raw pass only" % type(exc).__name__)
         return engine.scrub(data, ctx, True, "")
     try:
-        changed = _process(pdf, path, engine, ctx, depth)
+        ctx.numbers_ok = True         # drawing text and document properties
+        try:
+            changed = _process(pdf, path, engine, ctx, depth)
+        finally:
+            ctx.numbers_ok = False
         if not changed:
             # nothing in the live document; still clean plain-text leftovers (old
             # incremental revisions, unreferenced objects) without moving any offset

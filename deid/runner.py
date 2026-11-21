@@ -66,6 +66,8 @@ def build_dictionary(rows, state_dir):
     if os.path.exists(disc):
         with open(disc) as f:
             d.add_discovered(json.load(f))
+    if os.environ.get("DEID_CODES", "1") != "0":
+        d.add_codes(paths)
     return d
 
 

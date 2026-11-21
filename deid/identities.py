@@ -160,6 +160,21 @@ def is_surname(low):
     return low in _SURNAMES
 
 
+_FOREIGN = None
+
+
+def is_foreign_word(low):
+    """Common word of another European language (accent-folded)."""
+    global _FOREIGN
+    if _FOREIGN is None:
+        try:
+            with gzip.open(os.path.join(HERE, "data", "foreign.txt.gz"), "rt") as f:
+                _FOREIGN = set(f.read().split())
+        except OSError:
+            _FOREIGN = set()
+    return low in _FOREIGN
+
+
 def is_word(low):
     return low in words()
 
@@ -210,6 +225,39 @@ def split_repo_component(component):
     if len(parts) == 1:
         return parts, ""
     return parts[:-1], parts[-1]
+
+
+# ---- part / drawing / document numbers -------------------------------------------
+# A "code" is a word of a file name that carries digits (D1201469, FP10446, 810032).
+# Codes name one part or document of one collection: they are replaced inside that
+# collection only, in names, drawings and references alike, so a drawing and its model
+# keep matching numbers.  Sizes, standards and other common designations are left alone.
+CODE_GENERIC = re.compile(
+    r"^(?:m\d+(?:x\d+)*|\d+x\d+(?:x\d+)*|x\d+|iso\d+|din\d+|en\d+|ansi\d+|jis\d+|nema\d+|awg\d+|"
+    r"v\d+(?:p\d+)?|ver\d+|rev[a-z]?\d*|r\d+|rc\d+|"
+    r"\d+(?:mm|cm|um|nm|in|inch|ft|deg|v|vac|vdc|w|kw|a|ma|kg|g|lb|oz|n|nm|rpm|hz|khz|mhz|k|ohm|pin|pins|pcs|pc|t|teeth|z|way|pos|mil|awg|dpi|px|bit|gb|mb|l|ml|s|ms|h|hp|bar|psi|c|f|th|st|nd|rd|d|p)|"
+    r"(?:19|20)\d{2}|(?:19|20)\d{6}|\d{6}t\d{4,6}|\d+e\d+|[0-9a-f]{10,}|"
+    r"sheet\d+|page\d+|part\d+|copy\d+|item\d+|fig\d+|figure\d+|img\d+|image\d+|dsc\d+|pic\d+|scan\d+|"
+    r"layer\d+|view\d+|step\d+|test\d+|sample\d+|example\d+|drawing\d+|model\d+|body\d+|sketch\d+|"
+    r"3d|2d|4k|h264|mp4|mp3|utf8|a[0-5]|b[0-5]|[a-z]\d|\d[a-z])$")
+DRAWING_EXTS = set(".pdf .slddrw .idw .dwg .dxf .dft .drw .catdrawing .ps .edrw".split())
+_CODE_DIM = re.compile(r"\d+x\d+|\d(?:mm|cm|inch|in|deg|awg|vac|vdc|ohm|rpm|khz|mhz|teeth)(?![a-z])|^m\d+x|^\d{8}t\d{6}z?$|^\d{4,5}[a-z]\d{2,4}$")
+_CODE_WORDNUM = re.compile(r"^([a-z]{3,})(\d{1,4})$")
+CODE_EXTS = set(""".pdf .slddrw .sldprt .sldasm .ipt .iam .idw .ipn .dwg .dxf .step .stp .igs .iges .stl .x_t .x_b
+.sat .f3d .f3z .fcstd .par .asm .psm .dft .prt .drw .catpart .catproduct .catdrawing .3mf .obj .jt .wrl .svg .ps .brep
+.neu .unv .u3d .easm .eprt .edrw .3dm .skp .scad .png .jpg .jpeg .tif .bmp .zip .7z .rar .gz .tar""".split())
+
+
+def code_atom(low):
+    """True if the lower-case file-name word ``low`` looks like a part / document number."""
+    if not any(c.isdigit() for c in low) or CODE_GENERIC.match(low) or _CODE_DIM.search(low):
+        return False
+    m = _CODE_WORDNUM.match(low)
+    if m and (is_word(m.group(1)) or is_foreign_word(m.group(1))):
+        return False                                # pulley14, welle2: a plain word and a counter
+    if low.isdigit():
+        return 5 <= len(low) <= 12 and len(set(low)) > 2
+    return 4 <= len(low) <= 24 and len(set(low)) > 2
 
 
 CAMEL_RE = re.compile(r"[A-Z][a-z]+|[a-z]+|[A-Z]+(?![a-z])")
@@ -271,6 +319,37 @@ class Dictionary(object):
                         self.scoped.setdefault(scope, set()).add(pl)
             if repo:
                 self.add_repo_name(repo, scope)
+
+    def add_codes(self, paths, max_spread=6):
+        """Part / drawing numbers used in the file names of each collection."""
+        per = {}
+        spread = {}
+        for path in paths:
+            base = path.rsplit("/", 1)[-1]
+            stem = base
+            for _ in range(3):                      # part.prt.1, drawing.SLDDRW ...
+                root, ext = os.path.splitext(stem)
+                if ext and (ext.lower() in CODE_EXTS or ext[1:].isdigit() and len(ext) <= 4):
+                    stem = root
+                else:
+                    break
+            if stem == base and "." in base:
+                continue                            # not a design / document file
+            if os.path.splitext(base)[1].lower() not in DRAWING_EXTS:
+                continue                            # numbers are taken from drawings and documents
+            scope = scope_of(path)
+            for a in ATOM_RE.findall(stem):
+                low = a.lower()
+                if code_atom(low) and low not in STOP and low not in SOFTWARE and not is_word(low):
+                    per.setdefault(scope, set()).add(low)
+                    sp = spread.setdefault(low, set())
+                    if len(sp) <= max_spread:
+                        sp.add(scope)
+        self.codes = {}
+        for scope, atoms in per.items():
+            keep = sorted(a for a in atoms if len(spread[a]) <= max_spread and a not in self.strong)
+            if keep:
+                self.codes[scope] = keep
 
     def add_repo_name(self, repo, scope):
         # Project names are replaced inside their own repository only: many repo
@@ -355,7 +434,7 @@ class Dictionary(object):
     def to_json(self):
         return {"strong": sorted(self.strong), "phrases": self.phrases,
                 "scoped": {k: sorted(v) for k, v in self.scoped.items()},
-                "scoped_phrases": self.scoped_phrases}
+                "scoped_phrases": self.scoped_phrases, "codes": getattr(self, "codes", {})}
 
     @classmethod
     def from_json(cls, obj):
@@ -364,6 +443,7 @@ class Dictionary(object):
         d.phrases = dict(obj.get("phrases", {}))
         d.scoped = {k: set(v) for k, v in obj.get("scoped", {}).items()}
         d.scoped_phrases = dict(obj.get("scoped_phrases", {}))
+        d.codes = dict(obj.get("codes", {}))
         return d
 
     def save(self, path):
