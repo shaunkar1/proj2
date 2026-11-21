@@ -510,7 +510,7 @@ class Engine(object):
                 span(m.start("last"), m.end("last"), "pdf-person", True)
         for m in PROSE_DOTTED.finditer(text):
             # "J.MOSKWA", "M.Littmann": initial and family name written together
-            if cls(m.group("last")) != "S":
+            if cls(m.group("last")) != "S" and len(set(m.group("last").lower())) > 2:
                 span(m.start("last"), m.end("last"), "pdf-person", True)
         for m in PROSE_LABEL.finditer(text):
             toks = m.group("name").split()

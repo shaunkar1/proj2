@@ -411,12 +411,14 @@ def _content_stream(target, raw, engine, ctx, resources=None, pdf=None, fcache=N
     for fi in infos[:6]:
         try:
             dec = [_decode(pc, fi)[0] for pc in pieces]
-            probes.append("\n".join(dec).encode("utf-8", "replace"))
-            probes.append("".join(dec).encode("utf-8", "replace"))
+            probes.append("\n".join(dec).encode("latin-1", "replace"))
+            probes.append("".join(dec).encode("latin-1", "replace"))
         except Exception:
             pass
     glyphwise = len(pieces) > 40 and sum(len(pc) for pc in pieces) < 3 * len(pieces)
-    if (all(engine.scrub(pr, ctx, False, "prose") == pr for pr in probes)
+    # raw operand bytes are readable text only when no font maps codes through a table
+    kinds = ["" if infos else "prose"] * 2 + ["prose"] * (len(probes) - 2)
+    if (all(engine.scrub(pr, ctx, False, kd) == pr for pr, kd in zip(probes, kinds))
             and not any(engine.maybe(pr, ctx) or _HINT.search(pr) for pr in probes[1::2])
             and not (glyphwise and len(pieces) < 60000)):
         return None
