@@ -17,6 +17,48 @@ from .engine import Ctx
 from .identities import STOP
 
 MAX_DEPTH = 6
+
+
+def _enable_zip_zstd():
+    """Teach zipfile to read Zstandard members (method 93, used by current Fusion 360
+    archives).  Changed archives are written back with Deflate, which every reader accepts."""
+    if getattr(zipfile, "_deid_zstd", False):
+        return True
+    try:
+        import zstandard
+    except Exception:
+        return False
+    orig_check = zipfile._check_compression
+    orig_get = zipfile._get_decompressor
+
+    class _Zd(object):
+        def __init__(self):
+            self._d = zstandard.ZstdDecompressor().decompressobj()
+            self.eof = False
+
+        def decompress(self, data):
+            out = self._d.decompress(data)
+            self.eof = bool(getattr(self._d, "eof", False))
+            return out
+
+    def check(compression):
+        if compression == 93:
+            return None
+        return orig_check(compression)
+
+    def get(compress_type):
+        if compress_type == 93:
+            return _Zd()
+        return orig_get(compress_type)
+
+    zipfile._check_compression = check
+    zipfile._get_decompressor = get
+    zipfile.compressor_names[93] = "zstd"
+    zipfile._deid_zstd = True
+    return True
+
+
+_enable_zip_zstd()
 COMPOSITE_ZIP = (".fcstd", ".3mf", ".f3d", ".f3z", ".odg", ".odt", ".ods", ".odp", ".docx", ".xlsx", ".pptx",
                  ".kmz", ".fcbak", ".amf")
 XML_EXT = (".xml", ".svg", ".html", ".htm", ".xhtml", ".rels", ".model", ".kml", ".urdf", ".xacro", ".sdf",

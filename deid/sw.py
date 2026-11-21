@@ -72,7 +72,9 @@ def deflate_to_size(raw, target):
     """Raw-deflate ``raw`` into exactly ``target`` bytes, or None."""
     best = None
     for level, mem, strat in ((9, 9, zlib.Z_DEFAULT_STRATEGY), (9, 8, zlib.Z_DEFAULT_STRATEGY),
-                              (6, 8, zlib.Z_DEFAULT_STRATEGY), (9, 9, zlib.Z_FILTERED), (1, 8, zlib.Z_DEFAULT_STRATEGY)):
+                              (6, 8, zlib.Z_DEFAULT_STRATEGY), (9, 9, zlib.Z_FILTERED), (1, 8, zlib.Z_DEFAULT_STRATEGY),
+                              (9, 9, zlib.Z_FIXED), (9, 9, zlib.Z_RLE), (9, 9, zlib.Z_HUFFMAN_ONLY), (4, 8, zlib.Z_DEFAULT_STRATEGY),
+                              (9, 1, zlib.Z_DEFAULT_STRATEGY), (9, 5, zlib.Z_DEFAULT_STRATEGY)):
         c = zlib.compressobj(level, zlib.DEFLATED, -15, mem, strat)
         fin = c.compress(raw) + c.flush()
         if len(fin) == target:
