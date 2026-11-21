@@ -502,6 +502,9 @@ def run(args):
                     while len(inflight) < nworkers * 3 and not exhausted:
                         if os.path.exists(stop_file):      # state/stop-N: finish what is running, then end
                             exhausted = True
+                            for fut in list(inflight):       # files still waiting for a worker are left undone
+                                if fut.cancel():
+                                    inflight.pop(fut, None)
                             break
                         row = next(it, None)
                         if row is None:
