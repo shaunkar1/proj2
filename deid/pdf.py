@@ -139,6 +139,37 @@ def _strip_text_fast(pdf):
     return done
 
 
+_TOOL_WORDS = frozenset("""solidworks sldworks autodesk autocad inventor fusion revit creo parametric catia dassault
+systemes siemens solidedge unigraphics onshape freecad librecad draftsight bricscad rhino rhinoceros sketchup
+adobe acrobat distiller indesign illustrator photoshop pdfmaker microsoft word excel powerpoint office visio
+publisher ghostscript pdfcreator pscript quartz pdfcontext skia cairo inkscape latex pdftex luatex xetex texlive
+bluebeam foxit nitro pdfsam itext itextsharp reportlab wkhtmltopdf chromium chrome canon epson xerox ricoh
+kyocera lexmark brother konica minolta toshiba fujitsu scansnap navigator bullzip cutepdf primopdf dopdf
+libreoffice openoffice writer draw impress corel coreldraw kicad eagle altium orcad eplan zuken ansys
+matlab mathworks wolfram mathematica keynote pages preview apple macos windows mac""".split())
+
+
+def _tool_words(pdf, ctx):
+    """Names of the programs that produced the document (taken from its own Creator /
+    Producer properties): replaced where the page text repeats them."""
+    from .identities import is_word
+    try:
+        info = pdf.trailer.get("/Info")
+        if info is None:
+            return
+        for k in ("/Creator", "/Producer"):
+            v = info.get(k)
+            if not isinstance(v, pikepdf.String):
+                continue
+            for tok in re.findall(r"[A-Za-z][A-Za-z0-9]+", str(v)):
+                low = tok.lower()
+                if low in _TOOL_WORDS or (len(low) >= 6 and low.isalpha() and not is_word(low)):
+                    if len(low) >= 4:
+                        ctx.local_wide.add(low)
+    except Exception:
+        pass
+
+
 def _all_properties(pdf, engine, keep=()):
     """Every document property becomes a pseudonym (word by word); the XMP copies are dropped.
     Returns True when something changed."""
@@ -201,6 +232,8 @@ def _process_file(path, data, engine, ctx, depth):
     try:
         if os.environ.get("DEID_PDF_OWN") == "1":
             _own_title_words(path, ctx)
+        if os.environ.get("DEID_PDF_TOOLS") == "1":
+            _tool_words(pdf, ctx)
         ctx.numbers_ok = True         # drawing text and document properties
         try:
             changed = _process(pdf, path, engine, ctx, depth)
