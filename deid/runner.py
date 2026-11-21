@@ -275,6 +275,12 @@ def _ident_name(orig, earlier, keep):
             if flat:
                 atoms.add(flat)
     atoms = set(a for a in atoms if len(a) >= 4 and not a.isdigit() and not is_word(a))
+    for comp in ko[max(0, keep - 1):keep]:
+        if "__" in comp:        # owner__project: the owner is an identity even when it is a word
+            owner = comp.split("__")[0]
+            for run in _NAME_TOK.findall(owner):
+                if len(run) >= 3 and not run.isdigit():
+                    atoms.add(run.lower())
     out = vo[:keep]
     for co, cv in zip(ko[keep:], vo[keep:]):
         if co == cv or len(co) != len(cv):
