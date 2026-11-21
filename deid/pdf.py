@@ -31,6 +31,8 @@ HEXSTR = re.compile(rb"<([0-9A-Fa-f\s]{2,})>")
 
 
 def process(path, data, engine, ctx, depth):
+    if os.environ.get("DEID_PDF_RAW") == "1":
+        return data             # experiment only: documents passed through untouched
     keep = ctx.numbers_ok
     try:
         return _process_file(path, data, engine, ctx, depth)
