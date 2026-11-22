@@ -528,6 +528,10 @@ def run(args):
                     if rec.get("ok") and rec.get("out_path"):
                         bigrec[rec["path"]] = rec
         nbig = 0
+        redo = None                       # --redo-list FILE: only these files are produced again
+        if getattr(args, "redo_list", ""):
+            with open(args.redo_list, encoding="utf-8") as f:
+                redo = set(l.rstrip("\n") for l in f if l.strip())
         for r in todo:
             pr = prevrec.get(r[0])
             br = bigrec.get(r[0]) if r[1] > big_bytes and handlers.ext_of(r[0]) in only else None
@@ -538,7 +542,11 @@ def run(args):
                 ncopy += 1
                 nbig += 1
                 continue
-            if pr is not None and handlers.ext_of(r[0]) not in only and not (args.only_prefix and r[0].startswith(args.only_prefix)):
+            if redo is not None:
+                again = r[0] in redo
+            else:
+                again = handlers.ext_of(r[0]) in only or bool(args.only_prefix and r[0].startswith(args.only_prefix))
+            if pr is not None and not again:
                 slim = {k: pr.get(k) for k in ("out_path", "out", "md5", "changed", "notes", "findings")}
                 if handlers.ext_of(r[0]) in copy_rename:
                     slim["dst_path"] = (_ident_name(r[0], pr["out_path"], ckeep, owners) if cident else

@@ -35,7 +35,13 @@ def process(path, data, engine, ctx, depth):
         return data             # experiment only: documents passed through untouched
     keep = ctx.numbers_ok
     try:
-        return _process_file(path, data, engine, ctx, depth)
+        out = _process_file(path, data, engine, ctx, depth)
+        if os.environ.get("DEID_PDF_OCR") == "1":
+            from . import ocr
+            if ocr.available():
+                ctx.numbers_ok = True
+                out = ocr.redact(out, engine, ctx)
+        return out
     finally:
         ctx.numbers_ok = keep
 
