@@ -110,7 +110,7 @@ rs-components newark grainger fastenal openbuilds makerbeam e3d-online e3d bondt
 leadshine trinamic murata molex amphenol harting phoenix-contact wago weidmuller schneider-electric allen-bradley
 beckhoff mitsubishi fanuc kuka yaskawa universal-robots sandvik kennametal mitutoyo starrett renishaw zeiss hamamatsu
 basler keysight tektronix loctite henkel dupont nord-lock helicoil heli-coil penn-engineering southco carr-lane jergens
-destaco smalley lee-spring gates sdp-si stock-drive-products boston-gear nachi koyo kaydon barden thomson pbc-linear
+destaco smalley lee-spring  sdp-si stock-drive-products boston-gear nachi koyo kaydon barden  pbc-linear
 bishop-wisecarver velmex zaber physik-instrumente aerotech applied-motion anaheim-automation lin-engineering portescap
 pittman dunkermotoren harmonic-drive nabtesco neugart wittenstein misumi-usa item24 maytec bossard wurth würth hilti
 norelem ganter elesa halder kipp essentra rs-pro traco meanwell mean-well tdk-lambda vishay bourns panasonic samsung
@@ -119,12 +119,12 @@ honeywell te-connectivity tyco-electronics jst hirose samtec wurth-elektronik ke
 ebm-papst sunon delta-electronics noctua nidec mabuchi johnson-electric dynamixel robotis hitec futaba savox
 ultimaker prusa makerbot creality lulzbot formlabs stratasys markforged raise3d bambu duet3d bigtreetech
 vention minitec 8020 80/20 bosch-rexroth tslots misumi-europa rose+krieger kanya alutec motedis dold-mechatronik
-ina fag ntn iko rbc nook ewellix schneeberger rollon igus-gmbh haydon-kerk kollmorgen moog bodine baldor sew-eurodrive
-lenze nord-drivesystems bonfiglioli sumitomo apex-dynamics gam stober vogel tsubaki renold martin-sprocket optibelt
-contitech habasit forbo ametek mts instron kistler hbm futek omega-engineering honeywell-sensing sick balluff
-pepperl+fuchs turck ifm baumer banner-engineering cognex flir allied-vision ximea optotune edmund newport-corporation
-opto-engineering qioptiq linos melles-griot cvi coherent ophir standa owis newmark sutter narishige prior marzhauser
-hamilton eppendorf gilson rainin masterflex cole-parmer idex upchurch valco vici bio-chem takasago clippard
+  ntn iko rbc  ewellix schneeberger rollon igus-gmbh haydon-kerk kollmorgen moog bodine baldor sew-eurodrive
+lenze nord-drivesystems bonfiglioli sumitomo apex-dynamics  stober  tsubaki renold martin-sprocket optibelt
+contitech habasit forbo ametek mts instron kistler hbm futek omega-engineering honeywell-sensing  balluff
+pepperl+fuchs turck ifm baumer banner-engineering cognex flir allied-vision ximea optotune  newport-corporation
+opto-engineering qioptiq linos melles-griot cvi  ophir  owis newmark sutter narishige  marzhauser
+ eppendorf  rainin masterflex cole-parmer  upchurch valco  bio-chem takasago clippard
 """.split()
 
 
@@ -158,6 +158,12 @@ spanish chinese japanese korean swiss dutch swedish danish norwegian finnish rus
 january february march april june july august september october november december monday tuesday wednesday thursday
 friday saturday sunday""".split())
 
+# words that put a name next to them in a title block or revision table
+NAME_CONTEXT = re.compile(
+    "(?i)(?:drawn|drwn|dwn|checked|chk'?d?|approved|appr?'?d?|appv'?d|designed|design|engineer|eng|author|released|"
+    "reviewed|prepared|created|modified|issued|signed|dibujado|aprobado|revisado|dise\xf1ado|comprobado|gezeichnet|"
+    "gepr\xfcft|gepr|gez|bearb|erstellt|dessin\xe9|v\xe9rifi\xe9|dessinateur|disegnato|controllato|approvato|"
+    "dibuixat|dissenyat|comprovat|aprovat|name|by|von|par|por)[ \t.:;/\\-]*$")
 LONE_NAME = re.compile(
     "(?<![A-Za-z\xc0-\xff0-9_.@/\\\\\\-])(?P<w>[A-Z\xc0-\xde][a-z\xdf-\xff]{3,}|[A-Z\xc0-\xde]{4,})(?![A-Za-z\xc0-\xff0-9_@/\\\\\\-])")
 UK_POSTCODE = re.compile(

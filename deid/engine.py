@@ -837,8 +837,16 @@ class Engine(object):
                 if (low in PROSE_STOP or low in STOP or low in SOFTWARE or low in RC.EPONYMS or low in ctx.produced
                         or is_word(low)):
                     continue
-                if is_surname(low) or (len(low) >= 4 and is_first_name(low)):
-                    span(m.start("w"), m.end("w"), "pdf-person", True)
+                if not (is_surname(low) or (len(low) >= 4 and is_first_name(low))):
+                    continue
+                if is_foreign_word(low):
+                    # also a word of another language: only beside a signature label or a date
+                    a0 = text.rfind("\n", 0, m.start()) + 1
+                    after = text[m.end():m.end() + 14]
+                    if not (RC.NAME_CONTEXT.search(text[max(a0, m.start() - 24):m.start()])
+                            or re.match(r"[ \t]{1,4}\d{1,2}[-/.](?:\d{1,2}|[A-Za-z]{3})[-/.]\d{2,4}", after)):
+                        continue
+                span(m.start("w"), m.end("w"), "pdf-person", True)
             for m in RC.UK_POSTCODE.finditer(text):
                 unit_spans.append(m.span("out"))
                 unit_spans.append(m.span("in"))
