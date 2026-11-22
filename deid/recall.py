@@ -57,6 +57,7 @@ _REJECT = [re.compile(p) for p in (
     r"^(?:PI|CO|PA|NL|PO)[A-Z]{1,5}\d+[A-Z0-9]*$", r"(?i)^conn_\d", r"^P\d\.\d+",
 )]
 _DATE = re.compile(r"^(?:\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}|\d{4}[-/.]\d{1,2}[-/.]\d{1,2})$")
+_STD_WORDS = set("iso din en ansi asme astm uni jis bs mil sae iec nf gb gost aisi unc unf unef npt bsp ipc ul csa vde nema awg".split())
 _SLASHED = re.compile(r"^[A-Za-z]{1,3}\d{2,5}(?:/[0-9A-Za-z.,]+){1,5}$")
 _GROUPED = re.compile(r"^[A-Z0-9]+(?:[-_][A-Z0-9]+){2,}$")
 _FEATURE = re.compile(r"^([A-Za-z]+?)(?:[-_ ]?\d+)+(?:_i\d+)?$")   # Sketch023, Dimension004, Link044_i10
@@ -105,7 +106,12 @@ def generic_code(t):
     if a >= 1 and d >= 4:
         return True
     # project-prefixed codes in several groups ("OF-PP-SM2", "5BHMBA-DA-D-Z4")
-    return a >= 3 and len(t) >= 8 and bool(_GROUPED.match(t))
+    if a >= 3 and len(t) >= 8 and _GROUPED.match(t):
+        groups = re.split(r"[-_]", t)
+        if any(g.lower() in _STD_WORDS or (g.isalpha() and len(g) >= 3 and is_word(g.lower())) for g in groups):
+            return False
+        return not all(re.match(r"^M\d+$", g) for g in groups)
+    return False
 
 
 TOKEN = re.compile(r"[^\s\x00]{5,48}")

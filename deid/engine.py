@@ -820,6 +820,14 @@ class Engine(object):
                 while e > s and text[e - 1] in RC.STRIP:
                     e -= 1
                 e -= RC.split_ext(text[s:e])
+                if not text[s:e].isascii():
+                    # a number followed by a title in another script: the leading part only
+                    k = s
+                    while k < e and ord(text[k]) < 128:
+                        k += 1
+                    e = k
+                    while e > s and text[e - 1] in "-_.(":
+                        e -= 1
                 if e - s >= 5 and RC.generic_code(text[s:e]):
                     span(s, e, "pdf-number", only=_partno_tok)
             # suppliers and manufacturers
@@ -842,9 +850,9 @@ class Engine(object):
                 if is_foreign_word(low):
                     # also a word of another language: only beside a signature label or a date
                     a0 = text.rfind("\n", 0, m.start()) + 1
-                    after = text[m.end():m.end() + 14]
+                    after = text[m.end():m.end() + 52]
                     if not (RC.NAME_CONTEXT.search(text[max(a0, m.start() - 24):m.start()])
-                            or re.match(r"[ \t]{1,4}\d{1,2}[-/.](?:\d{1,2}|[A-Za-z]{3})[-/.]\d{2,4}", after)):
+                            or re.match(r"[ \t]{1,40}\d{1,2}[-/.](?:\d{1,2}|[A-Za-z]{3})[-/.]\d{2,4}", after)):
                         continue
                 span(m.start("w"), m.end("w"), "pdf-person", True)
             for m in RC.UK_POSTCODE.finditer(text):
