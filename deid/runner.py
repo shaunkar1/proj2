@@ -356,7 +356,10 @@ def _copy_phase(rows, cfg, record, stop_file, nthreads=48):
             ok = False
             try:
                 if not os.path.exists(stop_file):
-                    ok = _copy_with(holder, cfg, cfg["prev_prefix"] + "corpus/" + prev["out_path"],
+                    src_prefix = cfg["prev_prefix"]
+                    if prev.get("src_attempt"):
+                        src_prefix = cfg["prefix"].rstrip("/").rsplit("/", 1)[0] + "/attempt-%s/" % prev["src_attempt"]
+                    ok = _copy_with(holder, cfg, src_prefix + "corpus/" + prev["out_path"],
                                     cfg["prefix"] + "corpus/" + (prev.get("dst_path") or prev["out_path"]))
             except Exception:
                 ok = False
@@ -510,8 +513,31 @@ def run(args):
         ckeep = int(getattr(args, "names_keep", 0) or 0) or 3
         cident = getattr(args, "names_mode", "") == "ident"
         owners = _owner_atoms([r[0] for r in rows]) if copy_rename else frozenset()
+        # large documents can be taken from another earlier attempt instead of being produced
+        # and uploaded again (slow connection): --big-from N --big-mb M
+        bigrec = {}
+        big_bytes = int(float(getattr(args, "big_mb", 0) or 0) * 1e6)
+        if getattr(args, "big_from", "") and big_bytes:
+            bdir = os.path.join(state, "attempt-%s" % args.big_from, "done.jsonl")
+            with open(bdir) as f:
+                for line in f:
+                    try:
+                        rec = json.loads(line)
+                    except Exception:
+                        continue
+                    if rec.get("ok") and rec.get("out_path"):
+                        bigrec[rec["path"]] = rec
+        nbig = 0
         for r in todo:
             pr = prevrec.get(r[0])
+            br = bigrec.get(r[0]) if r[1] > big_bytes and handlers.ext_of(r[0]) in only else None
+            if br is not None and pr is not None and br["out_path"] == pr["out_path"]:
+                slim = {k: br.get(k) for k in ("out_path", "out", "md5", "changed", "notes", "findings")}
+                slim["src_attempt"] = str(args.big_from)
+                new_todo.append(r + (slim,))
+                ncopy += 1
+                nbig += 1
+                continue
             if pr is not None and handlers.ext_of(r[0]) not in only and not (args.only_prefix and r[0].startswith(args.only_prefix)):
                 slim = {k: pr.get(k) for k in ("out_path", "out", "md5", "changed", "notes", "findings")}
                 if handlers.ext_of(r[0]) in copy_rename:
@@ -523,6 +549,8 @@ def run(args):
                 new_todo.append(r)
         todo = new_todo
         print("incremental: %d files copied from attempt-%s, %d re-processed" % (ncopy, args.reuse_from, len(todo) - ncopy), flush=True)
+        if nbig:
+            print("  of the copies, %d large documents come from attempt-%s" % (nbig, args.big_from), flush=True)
     if args.sample:
         step = max(1, len(todo) // args.sample)
         todo = todo[::step][:args.sample]
