@@ -254,10 +254,12 @@ def sweep(orig, out, engine, ctx):
         atoms, codes = replaced_sets(engine, texts0, texts1) if texts0 is not texts1 else ({}, {})
         ctx.swept = scope_entry(atoms, codes)
         ta, tc = own_targets(atoms, codes)
-        entry = _scope_sets().get(str(ctx.scope))
-        if entry:
-            ta.update(a for a in entry[0] if a not in ctx.produced)
-            tc.update(entry[1])
+        sets = _scope_sets()
+        for sc in (getattr(ctx, "scopes", None) or (ctx.scope,)):
+            entry = sets.get(str(sc))
+            if entry:
+                ta.update(a for a in entry[0] if a not in ctx.produced)
+                tc.update(entry[1])
         changed = 0
         left = 0
         for pno, quick in enumerate(texts1):
