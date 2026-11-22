@@ -137,7 +137,7 @@ vention minitec 8020 80/20 bosch-rexroth tslots misumi-europa rose+krieger kanya
 lenze nord-drivesystems bonfiglioli sumitomo apex-dynamics  stober  tsubaki renold martin-sprocket optibelt
 contitech habasit forbo ametek mts instron kistler hbm futek omega-engineering honeywell-sensing  balluff
 pepperl+fuchs turck ifm baumer banner-engineering cognex flir allied-vision ximea optotune  newport-corporation
-opto-engineering qioptiq linos melles-griot cvi  ophir  owis newmark sutter narishige  marzhauser
+arduino raspberry-pi haas-automation schroff rittal bopla hammond-manufacturing fibox opto-engineering qioptiq linos melles-griot cvi  ophir  owis newmark sutter narishige  marzhauser
  eppendorf  rainin masterflex cole-parmer  upchurch valco  bio-chem takasago clippard
 """.split()
 
@@ -179,6 +179,6 @@ NAME_CONTEXT = re.compile(
     "gepr\xfcft|gepr|gez|bearb|erstellt|dessin\xe9|v\xe9rifi\xe9|dessinateur|disegnato|controllato|approvato|"
     "dibuixat|dissenyat|comprovat|aprovat|name|by|von|par|por)[ \t.:;/\\-]*$")
 LONE_NAME = re.compile(
-    "(?<![A-Za-z\xc0-\xff0-9_.@/\\\\\\-])(?P<w>[A-Z\xc0-\xde][a-z\xdf-\xff]{3,}|[A-Z\xc0-\xde]{4,})(?![A-Za-z\xc0-\xff0-9_@/\\\\\\-])")
+    "(?<![A-Za-z\xc0-\xff0-9_.@/\\\\\\-])(?P<w>[A-Z\xc0-\xde][a-z\xdf-\xff]{3,}|[A-Z\xc0-\xde]{3,})(?![A-Za-z\xc0-\xff0-9_@/\\\\\\-])")
 UK_POSTCODE = re.compile(
     "(?<![A-Za-z0-9])(?:(?P<town>[A-Z][a-z]{3,})[ \t,]+)?(?P<out>[A-Z]{1,2}[0-9][A-Z0-9]?)[ \t](?P<in>[0-9][A-Z]{2})(?![A-Za-z0-9])")

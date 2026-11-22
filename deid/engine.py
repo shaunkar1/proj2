@@ -847,7 +847,7 @@ class Engine(object):
                     span(m.start("w"), m.end("w"), "pdf-person", True)
                     continue
                 if (low in PROSE_STOP or low in STOP or low in SOFTWARE or low in RC.EPONYMS or low in ctx.produced
-                        or is_word(low)):
+                        or is_word(low) or len(low) < 4):
                     continue
                 if not (is_surname(low) or (len(low) >= 4 and is_first_name(low))):
                     continue
