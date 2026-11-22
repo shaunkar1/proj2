@@ -346,6 +346,7 @@ class Dictionary(object):
         self.scoped_phrases = {}  # scope -> list of atom lists (project names made of ordinary words)
         self.auto = {}           # scope -> words only that collection's documents use (document text only)
         self.logos = set()       # digests of embedded pictures that are logos (blanked in PDFs)
+        self.doc_names = set()   # reviewed names for document text (kept in the private state, never in code)
         self.extra_code_phrases = {}
 
     # -- construction -------------------------------------------------
@@ -616,6 +617,7 @@ class Dictionary(object):
                 if a not in STOP and len(a) >= 3:
                     self.scoped.setdefault(scope, set()).add(a)
         self.logos.update(obj.get("logos", []))                 # digests of logo / stamp pictures in PDFs
+        self.doc_names.update(x.lower() for x in obj.get("doc_names", []))
         for scope, lits in obj.get("code_phrases", {}).items():  # numbers read from labelled title-block fields
             self.extra_code_phrases.setdefault(scope, set()).update(l.lower() for l in lits)
         for scope, atoms in obj.get("auto", {}).items():        # collection-specific document words
@@ -637,6 +639,7 @@ class Dictionary(object):
                 "scoped_phrases": self.scoped_phrases, "codes": getattr(self, "codes", {}),
                 "auto": {k: sorted(v) for k, v in getattr(self, "auto", {}).items()},
                 "code_phrases": getattr(self, "code_phrases", {}), "logos": sorted(getattr(self, "logos", ())),
+                "doc_names": sorted(getattr(self, "doc_names", ())),
                 "dup_scopes": getattr(self, "dup_scopes", {}),
                 "bounded": getattr(self, "bounded", [])}
 
@@ -651,6 +654,7 @@ class Dictionary(object):
         d.auto = {k: set(v) for k, v in obj.get("auto", {}).items()}
         d.code_phrases = dict(obj.get("code_phrases", {}))
         d.logos = set(obj.get("logos", []))
+        d.doc_names = set(obj.get("doc_names", []))
         d.dup_scopes = dict(obj.get("dup_scopes", {}))
         d.bounded = list(obj.get("bounded", []))
         return d

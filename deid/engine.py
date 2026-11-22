@@ -809,6 +809,7 @@ class Engine(object):
                 span(m.start("num"), m.end("num"), "pdf-number", only=_partno_tok)
         if self.recall:
             from . import recall as RC
+            doc_names = getattr(self.D, "doc_names", ())
             # numbers of parts, drawings and documents anywhere in the text (parts lists, references)
             for m in RC.TOKEN.finditer(text):
                 w = m.group(0)
@@ -842,6 +843,9 @@ class Engine(object):
             # a family or given name standing alone
             for m in RC.LONE_NAME.finditer(text):
                 low = m.group("w").lower()
+                if low in doc_names and low not in ctx.produced:
+                    span(m.start("w"), m.end("w"), "pdf-person", True)
+                    continue
                 if (low in PROSE_STOP or low in STOP or low in SOFTWARE or low in RC.EPONYMS or low in ctx.produced
                         or is_word(low)):
                     continue
