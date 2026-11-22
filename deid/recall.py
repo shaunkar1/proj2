@@ -57,6 +57,8 @@ _REJECT = [re.compile(p) for p in (
     r"^(?:PI|CO|PA|NL|PO)[A-Z]{1,5}\d+[A-Z0-9]*$", r"(?i)^conn_\d", r"^P\d\.\d+",
 )]
 _DATE = re.compile(r"^(?:\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}|\d{4}[-/.]\d{1,2}[-/.]\d{1,2})$")
+_SLASHED = re.compile(r"^[A-Za-z]{1,3}\d{2,5}(?:/[0-9A-Za-z.,]+){1,5}$")
+_GROUPED = re.compile(r"^[A-Z0-9]+(?:[-_][A-Z0-9]+){2,}$")
 _FEATURE = re.compile(r"^([A-Za-z]+?)(?:[-_ ]?\d+)+(?:_i\d+)?$")   # Sketch023, Dimension004, Link044_i10
 _SHAPE_OK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-_.+#]*[A-Za-z0-9]$")
 _EXT = re.compile(r"\.([A-Za-z][A-Za-z0-9_]{1,8})$")
@@ -72,8 +74,11 @@ def split_ext(word):
 
 def generic_code(t):
     """True for a token shaped like a part / drawing / document / order number."""
-    if len(t) < 5 or len(t) > 40 or "/" in t or "\\" in t or "@" in t:
+    if len(t) < 5 or len(t) > 40 or "\\" in t or "@" in t:
         return False
+    if "/" in t:
+        # catalogue numbers of mould and tooling suppliers ("Z1055/1/24x56/8")
+        return bool(_SLASHED.match(t))
     d = sum(c.isdigit() for c in t)
     if d == 0:
         return False
@@ -97,7 +102,10 @@ def generic_code(t):
         return False                       # an ordinary word with a counter
     if a >= 2 and d >= 3:
         return True
-    return a >= 1 and d >= 4
+    if a >= 1 and d >= 4:
+        return True
+    # project-prefixed codes in several groups ("OF-PP-SM2", "5BHMBA-DA-D-Z4")
+    return a >= 3 and len(t) >= 8 and bool(_GROUPED.match(t))
 
 
 TOKEN = re.compile(r"[^\s\x00]{5,48}")
