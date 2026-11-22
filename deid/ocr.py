@@ -9,8 +9,12 @@ box with the pseudonym written into it.  Everything else on the page stays as it
 Needs PyMuPDF and pyobjc-framework-Vision; without them the document is returned unchanged.
 """
 import os
+import re
 
 _STATE = {}
+# a word run together with the decimal that follows it ("approximately.008"): a reading slip,
+# not a part number
+_GLUED = re.compile(r"^[A-Za-z]{2,}\.{1,2}\d+\W?$")
 
 
 def available():
@@ -115,7 +119,7 @@ def redact(data, engine, ctx, recognise=None, max_pages=None, dpi=None):
             todo = []
             for (s, e, w, x0, y0, x1, y1) in words:
                 rep = new[s:e]
-                if rep == w:
+                if rep == w or _GLUED.match(w):
                     continue
                 r = fitz.Rect(rect.x0 + x0 * rect.width, rect.y0 + y0 * rect.height,
                               rect.x0 + x1 * rect.width, rect.y0 + y1 * rect.height)
