@@ -86,7 +86,7 @@ def generic_code(t):
     a = sum(c.isalpha() for c in t)
     if not _SHAPE_OK.match(t) or not t.isascii():
         return False
-    if _STD.match(t):
+    if _STD.match(t) or re.split(r"[-_.]", t)[0].lower() in _STD_WORDS:
         return False
     if a == 0:
         # digit groups: an order or drawing number ("827-9999-903", "2020-048-10"), or one long number
