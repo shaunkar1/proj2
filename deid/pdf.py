@@ -36,6 +36,11 @@ def process(path, data, engine, ctx, depth):
     keep = ctx.numbers_ok
     try:
         out = _process_file(path, data, engine, ctx, depth)
+        if os.environ.get("DEID_PDF_SWEEP") == "1" and depth == 0:
+            from . import sweep
+            if sweep.available():
+                ctx.numbers_ok = True
+                out = sweep.sweep(data, out, engine, ctx)
         if os.environ.get("DEID_PDF_OCR") == "1":
             from . import ocr
             if ocr.available():
