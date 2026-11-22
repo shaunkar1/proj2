@@ -112,7 +112,8 @@ PROSE_ORG = re.compile(
 PROSE_ORG_PREFIX = re.compile(
     "(?<![A-Za-z0-9\xc0-\xff])(?P<pre>(?:Technical |Technische |State |National |Royal )?(?:University|Universit\xe4t|Universit\xe9|Universidad|Universit\xe0|Universidade|"
     "Universiteit|Institute|Institut|Instituto|Istituto|College|School|Academy|Politecnico|Polit\xe9cnica|Hochschule|Fachhochschule|"
-    "Fundaci\xf3|Fundaci\xf3n|Fondazione|Laboratory|Department|Dept\\.?|Faculty|Centre|Center)(?: of| de| di| del| della| f\xfcr| for| d')?(?: the| la| les)?)"
+    "Fundaci\xf3|Fundaci\xf3n|Fondazione|Foundation|Fondation|Laboratory|Laboratoire|Laboratorio|Department|Dept\\.?|Faculty|Centre|Center|"
+    "Lyc\xe9e|Lycee|\xc9cole|Ecole|Escuela|Escola|Polytechnic|Polytechnique|Akademie|Acad\xe9mie|Universitet|Instytut|Politechnika)(?: of| de| di| del| della| f\xfcr| for| d')?(?: the| la| les)?)"
     "(?:[ \t]+|[ \t]*\n[ \t]*)(?P<name>(?:%s|[%s]{2,})(?:[ \t]+(?:%s|[%s]{2,}|of|de|di|and|at)){0,3})" % (_CAPW, _UP, _CAPW, _UP), re.I)
 PROSE_COPYRIGHT = re.compile(
     "(?:\xa9|\\(c\\)|\\bCopyright\\b|\\bCOPYRIGHT\\b)[ \t]*(?:\xa9|\\(c\\))?[ \t]*(?:\\d{4}(?:[ \t]*[-,][ \t]*\\d{2,4})*)?[ \t]*,?[ \t]*(?:by[ \t]*:?[ \t]+)?"
@@ -336,6 +337,7 @@ class Engine(object):
             add(a, _Entry("A", None, True, frozenset(scopes), False))
         self.code_mode = os.environ.get("DEID_CODES", "1")
         self.scope_words = os.environ.get("DEID_SCOPE_WORDS") == "1"
+        self.recall = os.environ.get("DEID_PDF_RECALL") == "1"
         self._pats = pats
         # distinctive names that are also matched inside longer words: a longer word that
         # is replaced as a whole keeps the same pseudonym for that part (see token())
@@ -805,6 +807,44 @@ class Engine(object):
             # "DWG NO. 5BHMBA-DA-D-W2", "Zeichnungsnummer: 2020-048-10": the number after the label
             if _partno_ok(m.group("num")):
                 span(m.start("num"), m.end("num"), "pdf-number", only=_partno_tok)
+        if self.recall:
+            from . import recall as RC
+            # numbers of parts, drawings and documents anywhere in the text (parts lists, references)
+            for m in RC.TOKEN.finditer(text):
+                w = m.group(0)
+                if not any(ch.isdigit() for ch in w):
+                    continue
+                s, e = m.span()
+                while s < e and text[s] in RC.STRIP:
+                    s += 1
+                while e > s and text[e - 1] in RC.STRIP:
+                    e -= 1
+                e -= RC.split_ext(text[s:e])
+                if e - s >= 5 and RC.generic_code(text[s:e]):
+                    span(s, e, "pdf-number", only=_partno_tok)
+            # suppliers and manufacturers
+            for m in RC.VENDORS.finditer(text):
+                v = m.group(0)
+                if re.sub(r"[\s]+", "-", v.lower()) in RC._VENDOR_CASE and not v[0].isupper():
+                    continue
+                for mm in re.finditer("[A-Za-z0-9\xc0-\xff]+", v):
+                    if len(mm.group(0)) >= 3:
+                        unit_spans.append((m.start() + mm.start(), m.start() + mm.end()))
+                ctx.found("pdf-vendor", v)
+            # a family or given name standing alone
+            for m in RC.LONE_NAME.finditer(text):
+                low = m.group("w").lower()
+                if (low in PROSE_STOP or low in STOP or low in SOFTWARE or low in RC.EPONYMS or low in ctx.produced
+                        or is_word(low)):
+                    continue
+                if is_surname(low) or (len(low) >= 4 and is_first_name(low)):
+                    span(m.start("w"), m.end("w"), "pdf-person", True)
+            for m in RC.UK_POSTCODE.finditer(text):
+                unit_spans.append(m.span("out"))
+                unit_spans.append(m.span("in"))
+                if m.group("town") and not is_word(m.group("town").lower()):
+                    unit_spans.append(m.span("town"))
+                ctx.found("pdf-address", m.group(0))
         for m in PROSE_ORG.finditer(text):
             toks = [t for t in m.group("name").split() if t[0].isupper() or t[0].isdigit()]
             if not toks:
